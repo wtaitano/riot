@@ -33,6 +33,21 @@ set (SRC_LIST
   hydro/hydro.hpp
   hydro/riemann.hpp
 
+  kinetics/bgk.cpp
+  kinetics/bgk.hpp
+  kinetics/equilibrium.hpp
+  kinetics/kinetics.cpp
+  kinetics/kinetics.hpp
+  kinetics/kinetics_bcs.cpp
+  kinetics/kinetics_bcs.hpp
+  kinetics/kinetics_init.cpp
+  kinetics/kinetics_output.cpp
+  kinetics/kinetics_tasks.cpp
+  kinetics/moments.hpp
+  kinetics/semi_lagrangian.cpp
+  kinetics/semi_lagrangian.hpp
+  kinetics/velocity_grid.hpp
+
   laser/laser.cpp
   laser/laser.hpp
   laser/laser_props.cpp

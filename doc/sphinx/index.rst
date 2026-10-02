@@ -49,6 +49,7 @@ block-adaptive, performance portable multi-material radiation hydrodynamics
    src/packages/mix
    src/packages/radiation_transport
    src/packages/radiation_diffusion
+   src/packages/kinetics
    src/packages/tnburn
    src/packages/sparse_physics
    src/packages/regions

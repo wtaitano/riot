@@ -125,6 +125,10 @@ chapter.
      - bool
      - ``false``
      - Enable P1 radiation diffusion.
+   * - kinetics
+     - bool
+     - ``false``
+     - Enable the BGK neutral-gas kinetic solver (Chapter :ref:`chap:kinetics`).
    * - gravity
      - bool
      - ``false``

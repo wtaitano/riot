@@ -22,6 +22,9 @@ add_executable(
   test_table_utils.cpp
   test_riemann.cpp
   test_reconstruction.cpp
+  test_kinetics_bgk.cpp
+  test_kinetics_equilibrium.cpp
+  test_kinetics_sl.cpp
 )
 
 target_link_libraries(riot_unit_tests PRIVATE

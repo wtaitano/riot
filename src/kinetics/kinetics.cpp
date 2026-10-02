@@ -1,0 +1,242 @@
+//========================================================================================
+// (C) (or copyright) 2026. Triad National Security, LLC. All rights reserved.
+//
+// This program was produced under U.S. Government contract 89233218CNA000001 for Los
+// Alamos National Laboratory (LANL), which is operated by Triad National Security, LLC
+// for the U.S. Department of Energy/National Nuclear Security Administration. All rights
+// in the program are reserved by Triad National Security, LLC, and the U.S. Department
+// of Energy/National Nuclear Security Administration. The Government is granted for
+// itself and others acting on its behalf a nonexclusive, paid-up, irrevocable worldwide
+// license in this material to reproduce, prepare derivative works, distribute copies to
+// the public, perform publicly and display publicly, and to permit others to do so.
+//========================================================================================
+// This file was made in part with generative AI.
+
+#include <cmath>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#include <utils/constants.hpp>
+
+#include "kinetics/bgk.hpp"
+#include "kinetics/kinetics.hpp"
+#include "kinetics/kinetics_bcs.hpp"
+#include "kinetics/semi_lagrangian.hpp"
+#include "materials/materials.hpp"
+
+namespace Kinetics {
+
+namespace {
+
+// Require the single hydro material to be a monatomic ideal gas and derive the
+// particle mass from it: p = (Gamma - 1) rho Cv T = n k_B T gives k_B / m = (Gamma-1) Cv.
+Species GasFromMaterial(ParameterInput *pin) {
+  using pc = parthenon::constants::PhysicalConstants<parthenon::constants::CGS>;
+  PARTHENON_REQUIRE(Materials::CountMaterials(pin) == 1,
+                    "kinetics: exactly one material (material0) is required");
+  const std::string mat = "material0";
+  PARTHENON_REQUIRE(pin->GetOrAddInteger(mat, "nphase", 1) == 1,
+                    "kinetics: the material must have a single phase");
+  const std::string eos_block =
+      pin->DoesParameterExist(mat, "eos") ? pin->GetString(mat, "eos") : mat;
+  PARTHENON_REQUIRE(pin->GetString(eos_block, "eos_type") == "IdealGas",
+                    "kinetics: the material EOS must be IdealGas");
+  const Real gamma = pin->GetReal(eos_block, "Gamma");
+  const Real cv = pin->GetReal(eos_block, "Cv");
+  PARTHENON_REQUIRE(std::abs(gamma - 5.0 / 3.0) < 1.0e-12,
+                    "kinetics: a monatomic gas needs Gamma = 5/3");
+  PARTHENON_REQUIRE(cv > 0.0, "kinetics: Cv must be positive");
+  Species s;
+  s.kb_per_m = (gamma - 1.0) * cv;
+  s.mass = pc::kb / s.kb_per_m;
+  return s;
+}
+
+} // namespace
+
+//----------------------------------------------------------------------------------------
+//! \fn  std::shared_ptr<StateDescriptor> Kinetics::Initialize
+//! \brief Kinetics package: parameters, velocity grid and fields.
+std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
+  auto pkg = std::make_shared<StateDescriptor>(pkg_name);
+  Params &params = pkg->AllParams();
+
+  const std::string representation = pin->GetOrAddString(
+      input_block, "representation", "dense", {"dense", "tt"},
+      "Velocity-space representation of f (only dense is implemented)");
+  PARTHENON_REQUIRE(representation == "dense",
+                    "kinetics: representation = tt is not implemented yet");
+  params.Add("representation", representation);
+
+  // Gas
+  const Species species = GasFromMaterial(pin);
+  params.Add("species", species);
+
+  // Velocity grid (CGS, cm/s)
+  int nv[3];
+  Real vmin[3], vmax[3];
+  for (int d = 0; d < 3; ++d) {
+    const std::string ax = std::to_string(d + 1);
+    nv[d] = pin->GetInteger(input_block, "nv" + ax);
+    vmin[d] = pin->GetReal(input_block, "v" + ax + "min");
+    vmax[d] = pin->GetReal(input_block, "v" + ax + "max");
+  }
+  const VelocityGrid grid = MakeVelocityGrid(nv, vmin, vmax);
+  params.Add("grid", grid);
+
+  // Discrete equilibrium solve
+  EquilibriumParams eq;
+  eq.tol = pin->GetOrAddReal(input_block, "eq_tol", 1.0e-13,
+                             "Relative moment tolerance of the equilibrium solve");
+  eq.max_iter = pin->GetOrAddInteger(input_block, "eq_max_iter", 20,
+                                     "Newton iteration limit of the equilibrium solve");
+  params.Add("eq_params", eq);
+  params.Add("eq_fallback_abort",
+             pin->GetOrAddReal(input_block, "eq_fallback_abort", 1.0e-3,
+                               "Abort if a larger fraction of cells falls back to the "
+                               "sampled Maxwellian"));
+
+  // Velocity-space resolution checks
+  params.Add("edge_mass_warn",
+             pin->GetOrAddReal(input_block, "edge_mass_warn", 1.0e-10,
+                               "Warn if a cell has more of its mass on the outermost "
+                               "node layer of the velocity box"));
+  params.Add("edge_mass_abort",
+             pin->GetOrAddReal(input_block, "edge_mass_abort", 1.0e-6,
+                               "Abort if a cell has more of its mass on the outermost "
+                               "node layer of the velocity box"));
+  params.Add("min_vth_over_dv",
+             pin->GetOrAddReal(input_block, "min_vth_over_dv", 1.5,
+                               "Warn if the thermal speed is resolved by fewer nodes"));
+  params.Add("check_every",
+             pin->GetOrAddInteger(input_block, "check_every", 100,
+                                  "Cycles between velocity-resolution checks"));
+
+  // Collision frequency
+  using pc = parthenon::constants::PhysicalConstants<parthenon::constants::CGS>;
+  CollisionModel model;
+  const std::string nu_model =
+      pin->GetOrAddString(input_block, "nu_model", "constant", {"constant", "power_law"},
+                          "BGK collision frequency model");
+  model.type = (nu_model == "constant") ? CollisionModel::Type::constant
+                                        : CollisionModel::Type::power_law;
+  model.kb = pc::kb;
+  model.nu0 = 0.0;
+  model.mu_ref = 1.0;
+  model.T_ref = 1.0;
+  model.omega = 0.5;
+  if (model.type == CollisionModel::Type::constant) {
+    model.nu0 = pin->GetReal(input_block, "nu0", "Constant collision frequency [1/s]");
+    PARTHENON_REQUIRE(model.nu0 >= 0.0, "kinetics: nu0 must be non-negative");
+  } else {
+    model.mu_ref = pin->GetReal(input_block, "mu_ref", "Viscosity at T_ref [g/(cm s)]");
+    model.T_ref = pin->GetReal(input_block, "T_ref", "Reference temperature [K]");
+    model.omega =
+        pin->GetOrAddReal(input_block, "omega", 0.5, "Viscosity exponent, mu ~ T^omega");
+    PARTHENON_REQUIRE(model.mu_ref > 0.0 && model.T_ref > 0.0,
+                      "kinetics: mu_ref and T_ref must be positive");
+  }
+  params.Add("collision_model", model);
+
+  // Streaming
+  SLParams sl;
+  sl.order = pin->GetOrAddInteger(input_block, "sl_order", 1,
+                                  "Semi-Lagrangian interpolation order (1 or 2)");
+  PARTHENON_REQUIRE(sl.order == 1 || sl.order == 2, "kinetics: sl_order must be 1 or 2");
+  const std::string limiter = pin->GetOrAddString(
+      input_block, "sl_limiter", "minmax", {"minmax", "none"},
+      "Clip interpolated values to the bracketing cells (minmax) or not (none)");
+  sl.limiter = (limiter == "minmax") && (sl.order == 2); // linear SL is monotone
+  params.Add("sl_params", sl);
+  const Real cfl = pin->GetOrAddReal(input_block, "cfl", 1.0,
+                                     "Max cells moved per kinetic substep (<= 1)");
+  PARTHENON_REQUIRE(cfl > 0.0 && cfl <= 1.0, "kinetics: cfl must be in (0, 1]");
+  params.Add("cfl", cfl);
+  const std::string integrator = pin->GetOrAddString(
+      input_block, "integrator", "sl_dirk2", {"sl_dirk2", "strang"},
+      "Streaming + collision integrator: characteristic IMEX-RK (sl_dirk2) or Strang");
+  params.Add("integrator",
+             (integrator == "strang") ? Integrator::strang : Integrator::sl_dirk2);
+  params.Add("merge_half_steps",
+             pin->GetOrAddBoolean(input_block, "merge_half_steps", true,
+                                  "strang: merge adjacent half steps of substeps"));
+  params.Add("substeps", 0, Params::Mutability::Mutable);
+  PARTHENON_REQUIRE(Globals::nghost >= 1, "kinetics: needs at least one ghost cell");
+
+  // Initialization from the hydro state
+  const std::string init =
+      pin->GetOrAddString(input_block, "init", "equilibrium",
+                          {"equilibrium", "bimaxwellian"}, "Initial distribution");
+  params.Add("init", init);
+  const Real init_T_ratio = pin->GetOrAddReal(
+      input_block, "init_T_ratio", 1.0, "bimaxwellian: T_parallel / T_perpendicular");
+  const int init_axis = pin->GetOrAddInteger(input_block, "init_axis", 1,
+                                             "bimaxwellian: parallel axis (1, 2 or 3)");
+  PARTHENON_REQUIRE(init_T_ratio > 0.0, "kinetics: init_T_ratio must be positive");
+  PARTHENON_REQUIRE(init_axis >= 1 && init_axis <= 3, "kinetics: init_axis must be 1-3");
+  params.Add("init_T_ratio", init_T_ratio);
+  params.Add("init_axis", init_axis);
+
+  // Fields
+  auto MetadataKinetics = pkg->GetMetadataFlag();
+  auto MetadataOperatorSplit = Metadata::GetOrAddFlag(riot::metadata::OperatorSplit);
+  Metadata mf({Metadata::Cell, Metadata::Independent, Metadata::FillGhost,
+               Metadata::Restart, MetadataKinetics, MetadataOperatorSplit},
+              std::vector<int>({grid.Size()}));
+  pkg->AddField<fields::f>(mf);
+
+  Metadata ms({Metadata::Cell, Metadata::Derived, Metadata::OneCopy, MetadataKinetics,
+               MetadataOperatorSplit});
+  pkg->AddField<fields::rho>(ms);
+  pkg->AddField<fields::temperature>(ms);
+  pkg->AddField<fields::pressure>(ms);
+  pkg->AddField<fields::eq_fallback>(ms);
+  Metadata m3({Metadata::Cell, Metadata::Derived, Metadata::OneCopy, MetadataKinetics,
+               MetadataOperatorSplit},
+              std::vector<int>({3}));
+  pkg->AddField<fields::velocity>(m3);
+  pkg->AddField<fields::heat_flux>(m3);
+  Metadata m6({Metadata::Cell, Metadata::Derived, Metadata::OneCopy, MetadataKinetics,
+               MetadataOperatorSplit},
+              std::vector<int>({6}));
+  pkg->AddField<fields::stress>(m6);
+
+  // Boundary conditions (needs grid, eq_params and species)
+  EnrollKineticBCs(pkg.get(), pin);
+
+  // Hooks
+  pkg->PostInitializationMesh = PostInitialization;
+  pkg->UserWorkBeforeOutputMesh = SetDerivedMomentsMesh;
+
+  // History
+  using parthenon::UserHistoryOperation;
+  parthenon::HstVec_list hst_vecs = {};
+  hst_vecs.emplace_back(parthenon::HistoryOutputVec(UserHistoryOperation::sum,
+                                                    HistorySums, "kinetics_sums"));
+  pkg->AddParam<>(parthenon::hist_vec_param_key, hst_vecs);
+  parthenon::HstVar_list hst_vars = {};
+  hst_vars.emplace_back(parthenon::HistoryOutputVar(UserHistoryOperation::min,
+                                                    HistoryMinF, "kinetics_min_f"));
+  hst_vars.emplace_back(parthenon::HistoryOutputVar(
+      UserHistoryOperation::sum, HistoryFallbackCount, "kinetics_eq_fallbacks"));
+  hst_vars.emplace_back(parthenon::HistoryOutputVar(
+      UserHistoryOperation::max, HistorySubsteps, "kinetics_substeps"));
+  pkg->AddParam<>(parthenon::hist_param_key, hst_vars);
+
+  if (Globals::my_rank == 0) {
+    std::stringstream msg;
+    msg << "kinetics: dense f on " << nv[0] << " x " << nv[1] << " x " << nv[2]
+        << " velocity nodes; particle mass m = " << species.mass
+        << " g, k_B/m = " << species.kb_per_m << " erg/(g K)" << std::endl;
+    for (int d = 0; d < 3; ++d) {
+      msg << "  v" << d + 1 << " in [" << vmin[d] << ", " << vmax[d]
+          << "], dv = " << grid.dv[d] << std::endl;
+    }
+    std::cout << msg.str();
+  }
+
+  return pkg;
+}
+
+} // namespace Kinetics

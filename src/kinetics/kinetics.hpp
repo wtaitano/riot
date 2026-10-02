@@ -1,0 +1,105 @@
+//========================================================================================
+// (C) (or copyright) 2026. Triad National Security, LLC. All rights reserved.
+//
+// This program was produced under U.S. Government contract 89233218CNA000001 for Los
+// Alamos National Laboratory (LANL), which is operated by Triad National Security, LLC
+// for the U.S. Department of Energy/National Nuclear Security Administration. All rights
+// in the program are reserved by Triad National Security, LLC, and the U.S. Department
+// of Energy/National Nuclear Security Administration. The Government is granted for
+// itself and others acting on its behalf a nonexclusive, paid-up, irrevocable worldwide
+// license in this material to reproduce, prepare derivative works, distribute copies to
+// the public, perform publicly and display publicly, and to permit others to do so.
+//========================================================================================
+#ifndef KINETICS_KINETICS_HPP_
+#define KINETICS_KINETICS_HPP_
+// This file was made in part with generative AI.
+
+// Kinetics package: a neutral monatomic gas described by its velocity distribution
+// function f(x, v, t) on a fixed uniform velocity grid, with a BGK collision operator.
+// The dense discrete-velocity solver here is the reference for later compressed (TT)
+// representations. Design: claude_sessions/kinetic_bgk/S0_DESIGN.md.
+
+#include <memory>
+
+#include <parthenon/driver.hpp>
+#include <parthenon/package.hpp>
+
+#include "kinetics/bgk.hpp"
+#include "kinetics/equilibrium.hpp"
+#include "kinetics/velocity_grid.hpp"
+#include "variables.hpp"
+
+using namespace parthenon;
+using namespace parthenon::package::prelude;
+
+namespace Kinetics {
+
+const std::string pkg_name = "kinetics";
+const std::string input_block = "kinetics";
+
+// Fields. As with the radiation intensity, the ncomp template argument of the flat
+// velocity-space field is a placeholder; the true component count is the number of
+// velocity nodes, nv1 * nv2 * nv3.
+namespace fields {
+VARIABLE_VECTOR(kinetics, f, false, 1); // number density in phase space, flat over v
+VARIABLE_SCALAR(kinetics, rho, false);
+VARIABLE_VECTOR(kinetics, velocity, false, 3);
+VARIABLE_SCALAR(kinetics, temperature, false);
+VARIABLE_SCALAR(kinetics, pressure, false);
+VARIABLE_VECTOR(kinetics, stress, false, 6); // xx, yy, zz, xy, xz, yz
+VARIABLE_VECTOR(kinetics, heat_flux, false, 3);
+VARIABLE_SCALAR(kinetics, eq_fallback, false); // 0 if the equilibrium solve converged
+} // namespace fields
+
+// Particle physics constants of the single species, derived from the hydro material.
+struct Species {
+  Real mass;     // particle mass [g]
+  Real kb_per_m; // k_B / m [erg / (g K)], so theta = (k_B / m) T
+};
+
+std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin);
+
+// Operator-split entry point, run after the hydro step.
+TaskCollection KineticsTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt);
+
+// Time integrator of streaming + collisions (kinetics_tasks.cpp).
+enum class Integrator { sl_dirk2, strang };
+
+// One BGK relaxation step of all interior cells (bgk.cpp).
+TaskStatus Relax(MeshData<Real> *md, const RelaxationStep step);
+// Clear kinetics.eq_fallback (bgk.cpp); Relax only sets it.
+TaskStatus ResetFallbackFlags(MeshData<Real> *md);
+// Abort if too many cells fell back to the sampled Maxwellian in the last relaxation.
+TaskStatus CheckEquilibriumFallbacks(Mesh *pm);
+
+// One semi-Lagrangian streaming step of length h, dst <- SL(src) (semi_lagrangian.cpp).
+TaskStatus Stream(MeshData<Real> *src, MeshData<Real> *dst, const Real h);
+// Largest substep allowed by kinetics/cfl over the whole mesh (MPI-reduced).
+Real MaxStreamingStep(Mesh *pm);
+
+// Fill f from the hydro state (equilibrium, or bi-Maxwellian deviation).
+void PostInitialization(Mesh *pm, ParameterInput *pin, MeshData<Real> *md);
+
+// Resolution diagnostics of the current f: the largest fraction of a cell's mass on
+// the outermost node layer of the velocity box, and the smallest v_th / dv. Global
+// (MPI-reduced). Warns or aborts according to the kinetics/edge_mass_* and
+// min_vth_over_dv parameters.
+struct ResolutionReport {
+  Real max_edge_mass_fraction;
+  Real min_vth_over_dv;
+};
+ResolutionReport CheckResolution(Mesh *pm, MeshData<Real> *md, const std::string &when);
+
+// Derived moment fields for output.
+void SetDerivedMomentsMesh(Mesh *pm, ParameterInput *pin, parthenon::SimTime &tm);
+
+// History: summed invariants of the kinetic and hydro states (see kinetics_output.cpp
+// for the column order) and min f.
+std::vector<Real> HistorySums(MeshData<Real> *md);
+Real HistoryMinF(MeshData<Real> *md);
+Real HistoryFallbackCount(MeshData<Real> *md);
+Real HistorySubsteps(MeshData<Real> *md);
+
+} // namespace Kinetics
+
+#endif // KINETICS_KINETICS_HPP_

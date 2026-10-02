@@ -17,6 +17,7 @@
 #include "gravity/gravity.hpp"
 #include "hydro/hydro.hpp"
 #include "ionization/ionization.hpp"
+#include "kinetics/kinetics.hpp"
 #include "laser/laser.hpp"
 #include "levelsets/levelsets.hpp"
 #include "materials/materials.hpp"
@@ -98,6 +99,8 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
                            "Enable prescribed sources as a function of time");
   const bool do_tracers =
       pin->GetOrAddBoolean("physics", "tracers", false, "Enable tracer particles");
+  const bool do_kinetics = pin->GetOrAddBoolean(
+      "physics", "kinetics", false, "Enable kinetic (BGK) neutral-gas transport");
 
   // check for compatibility
   if (do_strength) PARTHENON_REQUIRE(do_hydro, "Strength requires hydro.")
@@ -120,6 +123,7 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   if (do_lasers) PARTHENON_REQUIRE(do_ionization, "Lasers requires ionization.");
   if (do_prescribed_sources)
     PARTHENON_REQUIRE(do_hydro, "Prescribed sources requires hydro.");
+  if (do_kinetics) PARTHENON_REQUIRE(do_hydro, "Kinetics requires hydro.");
 
   // add options to params
   riot->AddParam("do_hydro", do_hydro);
@@ -138,6 +142,7 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   riot->AddParam("do_ionization", do_ionization);
   riot->AddParam("do_prescribed_sources", do_prescribed_sources);
   riot->AddParam("do_tracers", do_tracers);
+  riot->AddParam("do_kinetics", do_kinetics);
 
   // determine riot verbosity
   const bool verbose = pin->GetOrAddBoolean("riot", "verbose", true);
@@ -239,6 +244,10 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
     OperatorSplitTasks.push_back(PrescribedSources::Step);
   }
   if (do_gravity) packages.Add(Gravity::Initialize(pin.get()));
+  if (do_kinetics) {
+    packages.Add(Kinetics::Initialize(pin.get()));
+    OperatorSplitTasks.push_back(&Kinetics::KineticsTasks);
+  }
 
   riot_plugins::Plugins::Initialize(pin.get(), packages);
 
