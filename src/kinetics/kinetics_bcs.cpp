@@ -22,6 +22,8 @@
 #include "kinetics/equilibrium.hpp"
 #include "kinetics/kinetics.hpp"
 #include "kinetics/kinetics_bcs.hpp"
+#include "kinetics/tt_relax.hpp"
+#include "kinetics/tt_tensor.hpp"
 #include "kinetics/velocity_grid.hpp"
 
 namespace Kinetics {
@@ -155,8 +157,97 @@ void KineticBCImpl(std::shared_ptr<MeshBlockData<Real>> &mbd, bool coarse) {
       });
 }
 
+// representation = tt: the same three conditions on the cores of kinetics.f_tt.
+//   outflow:  copy the boundary cell's TT;
+//   specular: the mirror cell's TT with the node order of the wall-normal velocity axis
+//             reversed (exact);
+//   diffuse:  mask_leaving(v_n) f_ref + n_w mask_entering(v_n) M_w, a block sum of ranks
+//             (r + 1) rounded once (tt_eps), with n_w from exact contractions.
+// One ghost cell per team; level-1 team scratch for the diffuse rounding.
+template <CoordinateDirection DIR, Side SIDE, KineticBC TYPE>
+void KineticBCImplTT(std::shared_ptr<MeshBlockData<Real>> &mbd, bool coarse) {
+  auto pmb = mbd->GetBlockPointer();
+  constexpr bool inner = (SIDE == Side::Inner);
+  constexpr int d = static_cast<int>(DIR) - 1;
+  const auto &bounds = coarse ? pmb->c_cellbounds : pmb->cellbounds;
+  const auto range = NormalInterior<DIR>(bounds);
+  const int ref = inner ? range.s : range.e;
+  const int mirror_sum = 2 * ref + (inner ? -1 : 1);
+
+  auto pkg = pmb->packages.Get(pkg_name);
+  const auto grid = pkg->Param<VelocityGrid>("grid");
+  const auto L = pkg->Param<TT::TTLayout>("tt_layout");
+  const auto prm = pkg->Param<TT::RoundParams>("tt_round");
+  WallState wall{};
+  if constexpr (TYPE == KineticBC::diffuse) {
+    const int face = 2 * d + (inner ? 0 : 1);
+    wall = pkg->Param<std::array<WallState, 6>>("bc_wall_states")[face];
+  }
+  const auto sc = TT::MakeRelaxScratch(grid, L.rcap);
+  const int nwork = (TYPE == KineticBC::diffuse) ? sc.Size() : 0;
+  const std::size_t scratch_bytes = parthenon::ScratchPad1D<Real>::shmem_size(nwork);
+  TT::RequireTeamScratch(scratch_bytes, "a diffuse wall");
+  constexpr int scratch_level = 1;
+
+  std::set<parthenon::PDOpt> opts;
+  if (coarse) opts.insert(parthenon::PDOpt::Coarse);
+  auto desc = MakePackDescriptor<fields::f_tt>(mbd.get(), {Metadata::FillGhost}, opts);
+  auto v = desc.GetPack(mbd.get());
+  if (v.GetMaxNumberOfVars() == 0) return;
+
+  constexpr IndexDomain domain = GhostDomain<DIR, SIDE>();
+  const auto ib = bounds.GetBoundsI(domain);
+  const auto jb = bounds.GetBoundsJ(domain);
+  const auto kb = bounds.GetBoundsK(domain);
+  parthenon::par_for_outer(
+      DEFAULT_OUTER_LOOP_PATTERN, "Kinetics::BC_TT", DevExecSpace(), scratch_bytes,
+      scratch_level, kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
+      KOKKOS_LAMBDA(parthenon::team_mbr_t member, const int k, const int j, const int i) {
+        parthenon::loop_abstraction::impl::ForceCapture(v, grid, L, prm, mirror_sum, wall,
+                                                        sc);
+        parthenon::ScratchPad1D<Real> work(member.team_scratch(scratch_level), nwork);
+        Kokkos::single(Kokkos::PerTeam(member), [&]() {
+          using PC = TT::PackCell<decltype(v), fields::f_tt>;
+          int kr, jr, ir;
+          WithNormal<DIR>(k, j, i, ref, kr, jr, ir);
+          const auto ghost = TT::MakeOutRef(PC{v, 0, k, j, i}, L);
+          if constexpr (TYPE == KineticBC::outflow) {
+            TT::CopyTT(TT::MakeRef(PC{v, 0, kr, jr, ir}, L), ghost);
+          } else if constexpr (TYPE == KineticBC::specular) {
+            int km, jm, im;
+            WithNormal<DIR>(k, j, i, mirror_sum - NormalIndex<DIR>(k, j, i), km, jm, im);
+            TT::ReverseAxis(TT::MakeRef(PC{v, 0, km, jm, im}, L), ghost, d);
+          } else { // diffuse
+            const auto fr = TT::MakeRef(PC{v, 0, kr, jr, ir}, L);
+            // Same node classification as the dense BC (|v_n| < dv/4 counts as leaving).
+            auto leaving = [&](const int n) {
+              const Real vn = grid.Node(d, n);
+              return (inner ? (vn < 0.25 * grid.dv[d]) : (vn > -0.25 * grid.dv[d])) ? 1.0
+                                                                                    : 0.0;
+            };
+            auto flux = [&](const int n) {
+              return std::abs(grid.Node(d, n)) * leaving(n);
+            };
+            auto one = [](const int) { return 1.0; };
+            const Real outflux =
+                grid.Weight() * ((d == 0)   ? TT::Contract(fr, flux, one, one)
+                                 : (d == 1) ? TT::Contract(fr, one, flux, one)
+                                            : TT::Contract(fr, one, one, flux));
+            const Real n_w =
+                (wall.influx_per_n > 0.0) ? outflux / wall.influx_per_n : 0.0;
+            const auto mw =
+                TT::MakeOutRef(TT::PtrData{work.data() + sc.round.Size()}, sc.eq);
+            TT::FillMaxwellian(grid, wall.eq, mw);
+            auto entering = [&](const int n) { return n_w * (1.0 - leaving(n)); };
+            TT::AddScaledInto(sc.round, work.data(), d, fr, leaving, mw, entering);
+            TT::Round(sc.round, work.data(), ghost, prm);
+          }
+        });
+      });
+}
+
 template <CoordinateDirection DIR, Side SIDE>
-parthenon::BValFunc MakeBC(const KineticBC type) {
+parthenon::BValFunc MakeDenseBC(const KineticBC type) {
   switch (type) {
   case KineticBC::outflow:
     return KineticBCImpl<DIR, SIDE, KineticBC::outflow>;
@@ -170,20 +261,37 @@ parthenon::BValFunc MakeBC(const KineticBC type) {
   return nullptr;
 }
 
-parthenon::BValFunc MakeBC(const int face, const KineticBC type) {
+template <CoordinateDirection DIR, Side SIDE>
+parthenon::BValFunc MakeBC(const KineticBC type, const bool tt) {
+  if (tt) {
+    switch (type) {
+    case KineticBC::outflow:
+      return KineticBCImplTT<DIR, SIDE, KineticBC::outflow>;
+    case KineticBC::specular:
+      return KineticBCImplTT<DIR, SIDE, KineticBC::specular>;
+    case KineticBC::diffuse:
+      return KineticBCImplTT<DIR, SIDE, KineticBC::diffuse>;
+    default:
+      PARTHENON_FAIL("kinetics: no boundary function for a periodic face");
+    }
+  }
+  return MakeDenseBC<DIR, SIDE>(type);
+}
+
+parthenon::BValFunc MakeBC(const int face, const KineticBC type, const bool tt) {
   switch (face) {
   case 0:
-    return MakeBC<X1DIR, Side::Inner>(type);
+    return MakeBC<X1DIR, Side::Inner>(type, tt);
   case 1:
-    return MakeBC<X1DIR, Side::Outer>(type);
+    return MakeBC<X1DIR, Side::Outer>(type, tt);
   case 2:
-    return MakeBC<X2DIR, Side::Inner>(type);
+    return MakeBC<X2DIR, Side::Inner>(type, tt);
   case 3:
-    return MakeBC<X2DIR, Side::Outer>(type);
+    return MakeBC<X2DIR, Side::Outer>(type, tt);
   case 4:
-    return MakeBC<X3DIR, Side::Inner>(type);
+    return MakeBC<X3DIR, Side::Inner>(type, tt);
   default:
-    return MakeBC<X3DIR, Side::Outer>(type);
+    return MakeBC<X3DIR, Side::Outer>(type, tt);
   }
 }
 
@@ -237,13 +345,6 @@ void EnrollKineticBCs(StateDescriptor *pkg, ParameterInput *pin) {
                       "kinetics/" + faces[f] +
                           "_bc must be periodic exactly when the mesh face is");
     if (name == "periodic" || d >= ndim) continue;
-    // In the tensor-train representation the kinetic BCs come with streaming (S1 step
-    // 4); until then the mesh BC fills the ghosts of kinetics.f_tt.
-    PARTHENON_REQUIRE(
-        pkg->Param<std::string>("representation") == "dense" ||
-            (name == "outflow" && mesh_bc == "outflow"),
-        "kinetics: representation = tt supports only periodic and outflow faces so far "
-        "(kinetic and mesh BC both outflow)");
 
     KineticBC type = KineticBC::outflow;
     if (name == "specular") {
@@ -264,7 +365,8 @@ void EnrollKineticBCs(StateDescriptor *pkg, ParameterInput *pin) {
       PARTHENON_REQUIRE(u_w[d] == 0.0, "kinetics: a wall cannot move along its normal");
       walls[f] = MakeWallState(grid, eq_params, kb_per_m * T_w, u_w, d, inner);
     }
-    pkg->UserBoundaryFunctions[f].push_back(MakeBC(f, type));
+    pkg->UserBoundaryFunctions[f].push_back(
+        MakeBC(f, type, pkg->Param<std::string>("representation") == "tt"));
   }
   pkg->AddParam("bc_wall_states", walls);
 }

@@ -32,6 +32,9 @@
 //   * T3: one TT relaxation step (tt_relax.hpp) equals the dense RelaxCell (bgk.hpp)
 //     applied to the decompressed f, node by node, for exact and rational (c > 1) steps;
 //     ranks grow by at most 1 and the invariants are kept.
+//   * T4: TT streaming of one cell along each velocity axis (tt_stream.hpp) equals the
+//     dense SL update node by node, for linear and quadratic weights; ReverseAxis
+//     mirrors one velocity axis exactly; Contract equals the dense weighted sum.
 //
 // Kernels run on device in a single-iteration loop, as in test_kinetics_equilibrium.
 
@@ -48,9 +51,11 @@ using namespace parthenon::package::prelude;
 #include "kinetics/bgk.hpp"
 #include "kinetics/equilibrium.hpp"
 #include "kinetics/moments.hpp"
+#include "kinetics/semi_lagrangian.hpp"
 #include "kinetics/tt_linalg.hpp"
 #include "kinetics/tt_moments.hpp"
 #include "kinetics/tt_relax.hpp"
+#include "kinetics/tt_stream.hpp"
 #include "kinetics/tt_tensor.hpp"
 #include "kinetics/velocity_grid.hpp"
 
@@ -506,5 +511,94 @@ TEST_CASE("T3: TT relaxation equals dense relaxation of the decompressed f",
     CHECK(h[2] <= 3);
     CHECK(h[3] < 1.0e-13);
     CHECK(h[4] < 1.0e-13);
+  }
+}
+
+TEST_CASE("T4: TT streaming equals dense SL of the decompressed cells",
+          "[kinetics][tt][T4]") {
+  const auto grid = Grid(12, 10, 8);
+  const int rcap = 8;
+  const T::TTLayout L = T::MakeLayout(grid, rcap);
+  const auto sc = T::MakeStreamScratch(grid, rcap);
+  for (const int order : {1, 2}) {
+    for (const int d : {0, 1, 2}) {
+      View cells("cells", 4 * L.Size()), work("work", sc.Size());
+      View out("out", 4); // [stream err, reverse err, contract err, total ranks]
+      Kokkos::parallel_for(
+          "stream", 1, KOKKOS_LAMBDA(const int) {
+            // Three neighbor cells: different two-Maxwellian states (rank 2 each).
+            T::TTRef<T::PtrData> c[3] = {
+                T::MakeOutRef(T::PtrData{cells.data()}, L),
+                T::MakeOutRef(T::PtrData{cells.data() + L.Size()}, L),
+                T::MakeOutRef(T::PtrData{cells.data() + 2 * L.Size()}, L)};
+            for (int q = 0; q < 3; ++q) {
+              K::Maxwellian eq[2];
+              K::EquilibriumTarget t0{
+                  1.0 + 0.3 * q, {0.4 - 0.2 * q, 0.1, -0.2}, {1.0, 1.0, 1.0}};
+              K::EquilibriumTarget t1{
+                  0.5, {-0.6, 0.3 * q, 0.2}, {0.6 + 0.1 * q, 0.6, 0.6}};
+              K::SolveEquilibrium(grid, t0, K::EquilibriumParams{}, eq[0]);
+              K::SolveEquilibrium(grid, t1, K::EquilibriumParams{}, eq[1]);
+              T::FillMaxwellians(grid, eq, 2, c[q]);
+            }
+            const auto o = T::MakeOutRef(T::PtrData{cells.data() + 3 * L.Size()}, L);
+            T::RoundParams prm;
+            prm.eps = 1.0e-15;
+            T::RoundTally tally;
+            const Real hdx = 0.07; // |s| = |v| 0.07 <= 0.42 on the +-6 box
+            T::StreamCellTT(grid, order, d, hdx, T::MakeRef(c[0].data, L),
+                            T::MakeRef(c[1].data, L), T::MakeRef(c[2].data, L), o, sc,
+                            work.data(), prm, tally);
+            const auto r = T::MakeRef(o.data, L);
+            Real err = 0.0, fmax = 0.0;
+            for (int k = 0; k < grid.nv[2]; ++k)
+              for (int j = 0; j < grid.nv[1]; ++j)
+                for (int i = 0; i < grid.nv[0]; ++i) {
+                  const int idx[3] = {i, j, k};
+                  Real w[3];
+                  K::SLWeights(order, grid.Node(d, idx[d]) * hdx, w);
+                  const Real ref = w[0] * T::MakeRef(c[0].data, L)(i, j, k) +
+                                   w[1] * T::MakeRef(c[1].data, L)(i, j, k) +
+                                   w[2] * T::MakeRef(c[2].data, L)(i, j, k);
+                  err = std::max(err, std::abs(r(i, j, k) - ref));
+                  fmax = std::max(fmax, std::abs(ref));
+                }
+            // ReverseAxis of cell 1 along d, compared with mirrored evaluation.
+            T::ReverseAxis(T::MakeRef(c[1].data, L), o, d);
+            const auto rv = T::MakeRef(o.data, L);
+            const auto c1 = T::MakeRef(c[1].data, L);
+            Real erev = 0.0;
+            for (int k = 0; k < grid.nv[2]; ++k)
+              for (int j = 0; j < grid.nv[1]; ++j)
+                for (int i = 0; i < grid.nv[0]; ++i) {
+                  int m[3] = {i, j, k};
+                  m[d] = grid.nv[d] - 1 - m[d];
+                  erev = std::max(erev, std::abs(rv(i, j, k) - c1(m[0], m[1], m[2])));
+                }
+            // Contract with weights |v_d| (other axes 1) vs the dense sum.
+            auto wd = [&](const int n) { return std::abs(grid.Node(d, n)); };
+            auto one = [](const int) { return 1.0; };
+            const Real con = (d == 0)   ? T::Contract(c1, wd, one, one)
+                             : (d == 1) ? T::Contract(c1, one, wd, one)
+                                        : T::Contract(c1, one, one, wd);
+            Real dsum = 0.0;
+            for (int k = 0; k < grid.nv[2]; ++k)
+              for (int j = 0; j < grid.nv[1]; ++j)
+                for (int i = 0; i < grid.nv[0]; ++i) {
+                  const int idx[3] = {i, j, k};
+                  dsum += std::abs(grid.Node(d, idx[d])) * c1(i, j, k);
+                }
+            out(0) = err / fmax;
+            out(1) = erev;
+            out(2) = std::abs(con - dsum) / std::abs(dsum);
+            out(3) = tally.cap_hits + tally.svd_failures;
+          });
+      const auto h = ToHost(out);
+      INFO("order " << order << ", axis " << d);
+      CHECK(h[0] < 1.0e-13);
+      CHECK(h[1] == 0.0);
+      CHECK(h[2] < 1.0e-13);
+      CHECK(h[3] == 0.0);
+    }
   }
 }

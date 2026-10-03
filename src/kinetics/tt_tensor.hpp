@@ -40,6 +40,7 @@
 // rounding error up to roundoff (the two truncations are orthogonal projections).
 
 #include <cmath>
+#include <string>
 
 #include <parthenon/package.hpp>
 
@@ -69,6 +70,17 @@ struct TTLayout {
   KOKKOS_INLINE_FUNCTION int Slot3() const { return Slot2() + rcap * n[1] * rcap; }
   KOKKOS_INLINE_FUNCTION int Size() const { return Slot3() + rcap * n[2]; }
 };
+
+// Host check that a per-team level-1 scratch request fits the device limit.
+inline void RequireTeamScratch(const std::size_t bytes, const char *what) {
+  const std::size_t cap = Kokkos::TeamPolicy<DevExecSpace>::scratch_size_max(1);
+  PARTHENON_REQUIRE(bytes <= cap, std::string("kinetics TT: ") + what + " needs " +
+                                      std::to_string(bytes) +
+                                      " bytes of team scratch per cell, above the "
+                                      "device limit " +
+                                      std::to_string(cap) +
+                                      "; lower tt_rank_max or the velocity resolution");
+}
 
 inline TTLayout MakeLayout(const VelocityGrid &grid, const int rcap) {
   PARTHENON_REQUIRE(rcap >= 1, "kinetics: tensor-train rank capacity must be >= 1");
@@ -398,6 +410,99 @@ KOKKOS_INLINE_FUNCTION void AddInto(const RoundScratch &sc, Real *work, const Re
     for (int b = 0; b < b2; ++b)
       in.G3(a2 + b, k) = B.G3(b, k);
   }
+}
+
+// Value of node index n of core `axis` scaled by w(n): G1(n, a), G2(a, n, b), G3(b, n).
+// Write wA(n) A + wB(n) B (both scalings on velocity axis `axis`, i.e. f(v) times a
+// function of v_axis) into the scratch input slot as a block TT of ranks
+// (rA1 + rB1, rA2 + rB2). Constant scalings give AddInto. The summed ranks must not
+// exceed sc.rin.
+template <class DA, class WA, class DB, class WB>
+KOKKOS_INLINE_FUNCTION void
+AddScaledInto(const RoundScratch &sc, Real *work, const int axis, const TTRef<DA> &A,
+              const WA &wA, const TTRef<DB> &B, const WB &wB) {
+  const TTRef<PtrData> in = InputRef(sc, work);
+  const int a1 = A.R1(), a2 = A.R2(), b1 = B.R1(), b2 = B.R2();
+  const int r1 = a1 + b1, r2 = a2 + b2;
+  PARTHENON_DEBUG_REQUIRE(r1 <= sc.rin && r2 <= sc.rin,
+                          "kinetics TT: AddScaledInto ranks exceed scratch capacity");
+  in.SetRanks(r1, r2);
+  for (int i = 0; i < sc.n[0]; ++i) {
+    const Real sa = (axis == 0) ? wA(i) : 1.0, sb = (axis == 0) ? wB(i) : 1.0;
+    for (int a = 0; a < a1; ++a)
+      in.G1(i, a) = sa * A.G1(i, a);
+    for (int a = 0; a < b1; ++a)
+      in.G1(i, a1 + a) = sb * B.G1(i, a);
+  }
+  for (int b = 0; b < r2; ++b)
+    for (int j = 0; j < sc.n[1]; ++j) {
+      const Real sa = (axis == 1) ? wA(j) : 1.0, sb = (axis == 1) ? wB(j) : 1.0;
+      for (int a = 0; a < r1; ++a) {
+        Real v = 0.0;
+        if (a < a1 && b < a2) v = sa * A.G2(a, j, b);
+        if (a >= a1 && b >= a2) v = sb * B.G2(a - a1, j, b - a2);
+        in.G2(a, j, b) = v;
+      }
+    }
+  for (int k = 0; k < sc.n[2]; ++k) {
+    const Real sa = (axis == 2) ? wA(k) : 1.0, sb = (axis == 2) ? wB(k) : 1.0;
+    for (int b = 0; b < a2; ++b)
+      in.G3(b, k) = sa * A.G3(b, k);
+    for (int b = 0; b < b2; ++b)
+      in.G3(a2 + b, k) = sb * B.G3(b, k);
+  }
+}
+
+// dst = src with the node order of velocity axis `axis` reversed (v_axis -> -v_axis on
+// a grid symmetric about 0). dst.L.rcap must be >= the ranks of src.
+template <class D1, class D2>
+KOKKOS_INLINE_FUNCTION void ReverseAxis(const TTRef<D1> &src, const TTRef<D2> &dst,
+                                        const int axis) {
+  const int r1 = src.R1(), r2 = src.R2();
+  const int n0 = src.L.n[0], n1 = src.L.n[1], n2 = src.L.n[2];
+  PARTHENON_DEBUG_REQUIRE(r1 <= dst.L.rcap && r2 <= dst.L.rcap,
+                          "kinetics TT: ReverseAxis ranks exceed destination capacity");
+  dst.SetRanks(r1, r2);
+  for (int a = 0; a < r1; ++a)
+    for (int i = 0; i < n0; ++i)
+      dst.G1(i, a) = src.G1((axis == 0) ? n0 - 1 - i : i, a);
+  for (int b = 0; b < r2; ++b)
+    for (int j = 0; j < n1; ++j)
+      for (int a = 0; a < r1; ++a)
+        dst.G2(a, j, b) = src.G2(a, (axis == 1) ? n1 - 1 - j : j, b);
+  for (int k = 0; k < n2; ++k)
+    for (int b = 0; b < r2; ++b)
+      dst.G3(b, k) = src.G3(b, (axis == 2) ? n2 - 1 - k : k);
+}
+
+// sum_{ijk} wx(i) wy(j) wz(k) t(i, j, k) for separable node weights, O(n r1 r2).
+template <class Data, class WX, class WY, class WZ>
+KOKKOS_INLINE_FUNCTION Real Contract(const TTRef<Data> &t, const WX &wx, const WY &wy,
+                                     const WZ &wz) {
+  const int r1 = t.R1(), r2 = t.R2();
+  PARTHENON_DEBUG_REQUIRE(r1 <= kMaxRank, "kinetics TT: Contract rank above kMaxRank");
+  Real X[kMaxRank];
+  for (int a = 0; a < r1; ++a) {
+    Real x = 0.0;
+    for (int i = 0; i < t.L.n[0]; ++i)
+      x += wx(i) * t.G1(i, a);
+    X[a] = x;
+  }
+  Real sum = 0.0;
+  for (int b = 0; b < r2; ++b) {
+    Real xy = 0.0;
+    for (int j = 0; j < t.L.n[1]; ++j) {
+      Real xg = 0.0;
+      for (int a = 0; a < r1; ++a)
+        xg += X[a] * t.G2(a, j, b);
+      xy += wy(j) * xg;
+    }
+    Real z = 0.0;
+    for (int k = 0; k < t.L.n[2]; ++k)
+      z += wz(k) * t.G3(b, k);
+    sum += xy * z;
+  }
+  return sum;
 }
 
 template <class Data>

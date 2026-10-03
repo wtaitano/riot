@@ -52,6 +52,7 @@ void RelaxTT(MeshData<Real> *md, const RelaxationStep step) {
   const auto sc = TT::MakeRelaxScratch(grid, L.rcap);
   const int nwork = sc.Size();
   const std::size_t scratch_bytes = parthenon::ScratchPad1D<Real>::shmem_size(nwork);
+  TT::RequireTeamScratch(scratch_bytes, "relaxation");
   constexpr int scratch_level = 1;
 
   const auto ib = md->GetBoundsI(IndexDomain::interior);

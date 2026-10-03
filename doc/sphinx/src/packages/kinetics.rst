@@ -236,12 +236,20 @@ derived output fields are the same as for ``dense``, plus ``kinetics.tt_rank``
 
 .. warning::
 
-   Work in progress: in this version ``tt`` supports initialization, output and BGK
-   relaxation without streaming (``kinetics/streaming = false``: each cell relaxes as a
-   0D problem with the substeps of the chosen integrator). Each relaxation forms
-   :math:`(1-c)f + cM` (ranks + 1) and rounds it once. Streaming, the wall boundary
-   conditions and mesh refinement are not available yet, and ``sl_limiter = minmax``
-   is rejected (a pointwise limiter has no tensor-train form).
+   Work in progress: in this version ``tt`` runs on 1D meshes (any 3V grid), with both
+   integrators and all four kinetic boundary conditions. Each relaxation forms
+   :math:`(1-c)f + cM` (ranks + 1) and rounds it once. Streaming of a cell along
+   :math:`x` is two rounded block sums, :math:`\mathrm{round}(w_0 f_i + w_- f_{i-1})`
+   then :math:`+\,w_+ f_{i+1}`, where the weights depend only on :math:`v_x` and so
+   scale one core. Specular walls reverse the wall-normal core exactly; diffuse walls
+   build the ghost as a masked sum of the boundary cell and the wall Maxwellian and
+   round it. Multi-D meshes, mesh refinement and ``sl_limiter = minmax`` (a pointwise
+   limiter has no tensor-train form) are not available yet.
+
+   Every rounding adds an error of up to ``tt_eps`` (relative), and these errors
+   accumulate over the steps. To compare with the dense solver at roundoff level use
+   ``tt_eps = 1e-14``; with ``1e-10`` the moments of a short 1D Sod run differ by a
+   few 1e-9.
 
 .. list-table:: Tensor-train parameters in the ``<kinetics>`` block.
    :class: wraptable

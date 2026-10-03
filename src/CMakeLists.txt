@@ -50,6 +50,7 @@ set (SRC_LIST
   kinetics/tt_linalg.hpp
   kinetics/tt_moments.hpp
   kinetics/tt_relax.hpp
+  kinetics/tt_stream.hpp
   kinetics/tt_tensor.hpp
   kinetics/velocity_grid.hpp
 

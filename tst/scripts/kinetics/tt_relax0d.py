@@ -140,22 +140,32 @@ def analyze():
                 ok = False
             h, c = read_history(t)
             if np.max(h[:, c["kinetics_tt_max_rank"]]) != 2:
-                logger.warning(f"{t}: max rank {np.max(h[:, c['kinetics_tt_max_rank']])}")
+                logger.warning(
+                    f"{t}: max rank {np.max(h[:, c['kinetics_tt_max_rank']])}"
+                )
                 ok = False
-            if np.any(h[:, c["kinetics_tt_round_1"]]) or np.any(h[:, c["kinetics_tt_round_2"]]):
+            if np.any(h[:, c["kinetics_tt_round_1"]]) or np.any(
+                h[:, c["kinetics_tt_round_2"]]
+            ):
                 logger.warning(f"{t}: rank-cap hits or non-converged SVDs")
                 ok = False
             ncell = h[0, c["kinetics_tt_ranks_0"]]
             if np.max(h[:, c["kinetics_tt_round_0"]]) / ncell > tol:
-                logger.warning(f"{t}: discarded norm {np.max(h[:, c['kinetics_tt_round_0']]):.3e}")
+                logger.warning(
+                    f"{t}: discarded norm {np.max(h[:, c['kinetics_tt_round_0']]):.3e}"
+                )
                 ok = False
             mass = h[0, c["kinetics_sums_0"]]
             minf = np.min(h[:, c["kinetics_min_f"]])
             negm = np.min(h[:, c["kinetics_sums_6"]])
             fmax = np.max(_fmax(t))
-            logger.info(f"{t}: min f / max f {minf / fmax:.3e}, neg mass {negm / mass:.3e}")
+            logger.info(
+                f"{t}: min f / max f {minf / fmax:.3e}, neg mass {negm / mass:.3e}"
+            )
             if minf < -1.0e-12 * fmax or abs(negm) > 1.0e-12 * mass:
-                logger.warning(f"{t}: min f {minf:.3e} (max f {fmax:.3e}), neg mass {negm:.3e}")
+                logger.warning(
+                    f"{t}: min f {minf:.3e} (max f {fmax:.3e}), neg mass {negm:.3e}"
+                )
                 ok = False
 
     # Negative control: rank-1 rounding must break the anisotropy history.
