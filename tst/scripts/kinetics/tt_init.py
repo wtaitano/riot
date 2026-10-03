@@ -99,7 +99,9 @@ def analyze():
         err = np.max(np.abs(fd - ft)) / np.max(np.abs(fd))
         logger.info(f"{init}: f max rel diff {err:.3e}, ranks {sorted(set(ranks))}")
         if err > 1.0e-13:
-            logger.warning(f"{init}: decompressed TT f differs from dense f ({err:.3e})")
+            logger.warning(
+                f"{init}: decompressed TT f differs from dense f ({err:.3e})"
+            )
             ok = False
         if set(ranks) != {(rank, rank)}:
             logger.warning(f"{init}: ranks {sorted(set(ranks))}, expected {rank}")
@@ -122,7 +124,12 @@ def analyze():
 
         hd, cd = read_history(pid("dense", init))
         ht, ct = read_history(pid("tt", init))
-        for n in ["kinetics_sums_0", "kinetics_sums_4", "kinetics_sums_5", "kinetics_min_f"]:
+        for n in [
+            "kinetics_sums_0",
+            "kinetics_sums_4",
+            "kinetics_sums_5",
+            "kinetics_min_f",
+        ]:
             x, y = hd[0, cd[n]], ht[0, ct[n]]
             if abs(x - y) > 1.0e-12 * abs(x):
                 logger.warning(f"{init}: history {n} dense {x:.17e} tt {y:.17e}")
@@ -132,11 +139,16 @@ def analyze():
             if ht[0, ct[c]] != rank * ncell:
                 logger.warning(f"{init}: {c} = {ht[0, ct[c]]}, expected {rank * ncell}")
                 ok = False
-        if ht[0, ct["kinetics_tt_max_rank"]] != rank or ht[0, ct["kinetics_tt_ranks_3"]]:
+        if (
+            ht[0, ct["kinetics_tt_max_rank"]] != rank
+            or ht[0, ct["kinetics_tt_ranks_3"]]
+        ):
             logger.warning(f"{init}: max rank / cap-hit columns wrong")
             ok = False
-        for kin, hyd in (("kinetics_sums_0", "kinetics_sums_7"),
-                         ("kinetics_sums_4", "kinetics_sums_11")):
+        for kin, hyd in (
+            ("kinetics_sums_0", "kinetics_sums_7"),
+            ("kinetics_sums_4", "kinetics_sums_11"),
+        ):
             x, y = ht[0, ct[kin]], ht[0, ct[hyd]]
             if abs(x - y) > 1.0e-12 * abs(y):
                 logger.warning(f"{init}: {kin} {x:.17e} vs hydro {hyd} {y:.17e}")
@@ -146,6 +158,8 @@ def analyze():
     fd = dense_f(pid("dense", "equilibrium"))
     ft, _ = tt_decompress(restart(pid("tt", "two_maxwellian")), nv, rcap)
     if np.max(np.abs(fd - ft)) / np.max(np.abs(fd)) <= 1.0e-13:
-        logger.warning("negative control: equilibrium and two_maxwellian f do not differ")
+        logger.warning(
+            "negative control: equilibrium and two_maxwellian f do not differ"
+        )
         ok = False
     return ok

@@ -175,6 +175,11 @@ The package is enabled with ``kinetics = true`` in the ``<physics>`` block.
      - string
      - ``sl_dirk2``
      - ``sl_dirk2`` (IMEX-RK, second order for any :math:`\nu h`) or ``strang``.
+   * - streaming
+     - bool
+     - ``true``
+     - ``false`` keeps only the collisions (0D relaxation tests), with the same
+       substeps.
    * - merge_half_steps
      - bool
      - ``true``
@@ -231,8 +236,10 @@ derived output fields are the same as for ``dense``, plus ``kinetics.tt_rank``
 
 .. warning::
 
-   Work in progress: in this version ``tt`` supports initialization and output only
-   (runs with ``parthenon/time/nlim = 0``). Streaming, collisions, the wall boundary
+   Work in progress: in this version ``tt`` supports initialization, output and BGK
+   relaxation without streaming (``kinetics/streaming = false``: each cell relaxes as a
+   0D problem with the substeps of the chosen integrator). Each relaxation forms
+   :math:`(1-c)f + cM` (ranks + 1) and rounds it once. Streaming, the wall boundary
    conditions and mesh refinement are not available yet, and ``sl_limiter = minmax``
    is rejected (a pointwise limiter has no tensor-train form).
 
@@ -265,7 +272,9 @@ derived output fields are the same as for ``dense``, plus ``kinetics.tt_rank``
        approximation) is planned.
 
 The history file adds ``kinetics_tt_ranks_0..3`` (cell count, sum of :math:`r_1`, sum of
-:math:`r_2`, cells at ``tt_rank_max``) and ``kinetics_tt_max_rank``.
+:math:`r_2`, cells at ``tt_rank_max``), ``kinetics_tt_round_0..2`` (over the last hydro
+step and all cells: sum of the relative discarded norms of the roundings, rank-cap hits,
+non-converged SVDs) and ``kinetics_tt_max_rank``.
 
 Output
 ------

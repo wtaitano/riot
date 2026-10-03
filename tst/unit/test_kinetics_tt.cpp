@@ -29,6 +29,9 @@
 //     decompressed tensor (raw and central, incl. heat flux), and the decompression
 //     ForEachNode equals entrywise evaluation, for a generic rank-(3, 4) TT and for a
 //     rank-2 sum of two drifting equilibria.
+//   * T3: one TT relaxation step (tt_relax.hpp) equals the dense RelaxCell (bgk.hpp)
+//     applied to the decompressed f, node by node, for exact and rational (c > 1) steps;
+//     ranks grow by at most 1 and the invariants are kept.
 //
 // Kernels run on device in a single-iteration loop, as in test_kinetics_equilibrium.
 
@@ -42,10 +45,12 @@
 
 using namespace parthenon::package::prelude;
 
+#include "kinetics/bgk.hpp"
 #include "kinetics/equilibrium.hpp"
 #include "kinetics/moments.hpp"
 #include "kinetics/tt_linalg.hpp"
 #include "kinetics/tt_moments.hpp"
+#include "kinetics/tt_relax.hpp"
 #include "kinetics/tt_tensor.hpp"
 #include "kinetics/velocity_grid.hpp"
 
@@ -439,5 +444,67 @@ TEST_CASE("T2: TT moments equal dense moments of the decompressed tensor",
     CHECK(h[0] < 1.0e-13);
     CHECK(h[1] < 1.0e-13);
     CHECK(h[2] < 1.0e-14);
+  }
+}
+
+TEST_CASE("T3: TT relaxation equals dense relaxation of the decompressed f",
+          "[kinetics][tt][T3]") {
+  const auto grid = Grid(16, 14, 12);
+  const int rcap = 6;
+  const T::TTLayout L = T::MakeLayout(grid, rcap);
+  const auto sc = T::MakeRelaxScratch(grid, rcap);
+  const K::CollisionModel model{
+      K::CollisionModel::Type::constant, 2.0, 1.0, 1.0, 0.5, 1.0};
+  // exact (c = 1 - e^{-1}) and a rational DIRK-like step with c > 1
+  for (const auto step :
+       {K::ExactRelaxation(0.5), K::RationalRelaxation(4.0, 0.7, 0.2)}) {
+    View a("a", L.Size()), dense("dense", grid.Size()), work("work", sc.Size());
+    View out("out", 6); // [max node err / max f, r1, r2, mass drift, energy drift, c]
+    Kokkos::parallel_for(
+        "relax", 1, KOKKOS_LAMBDA(const int) {
+          // f = bi-Maxwellian + 0.2 x a drifting equilibrium: rank 2, non-equilibrium.
+          K::Maxwellian eq[2];
+          K::EquilibriumTarget t0{1.0, {0.2, 0.0, -0.1}, {1.5, 0.75, 0.75}};
+          K::EquilibriumTarget t1{0.2, {-1.0, 0.5, 0.0}, {0.5, 0.5, 0.5}};
+          K::SolveAnisotropicEquilibrium(grid, t0, K::EquilibriumParams{}, eq[0]);
+          K::SolveEquilibrium(grid, t1, K::EquilibriumParams{}, eq[1]);
+          const auto f = T::MakeOutRef(T::PtrData{a.data()}, L);
+          T::FillMaxwellians(grid, eq, 2, f);
+          T::ForEachNode(f, [&](const int i, const int j, const int k, const Real v) {
+            dense(grid.Flat(i, j, k)) = v;
+          });
+          auto fd = [&](const int n) -> Real & { return dense(n); };
+          const auto m0 = K::ComputeRawMoments(grid, fd);
+          const auto rd =
+              K::RelaxCell(grid, fd, step, model, 1.0, K::EquilibriumParams{});
+          const auto fr = T::MakeRef(T::PtrData{a.data()}, L);
+          T::RoundParams prm;
+          prm.eps = 1.0e-14;
+          const auto rt = T::RelaxCellTT(grid, fr, step, model, 1.0,
+                                         K::EquilibriumParams{}, sc, work.data(), prm);
+          const auto g = T::MakeRef(T::PtrData{a.data()}, L);
+          Real err = 0.0, fmax = 0.0;
+          T::ForEachNode(g, [&](const int i, const int j, const int k, const Real v) {
+            const Real d = dense(grid.Flat(i, j, k));
+            err = std::max(err, std::abs(v - d));
+            fmax = std::max(fmax, std::abs(d));
+          });
+          const auto m1 = T::ComputeRawMoments(grid, g);
+          out(0) = err / fmax;
+          out(1) = rt.round.r1;
+          out(2) = rt.round.r2;
+          out(3) = std::abs(m1.n - m0.n) / m0.n;
+          out(4) = std::abs((m1.nvv[0] + m1.nvv[1] + m1.nvv[2]) -
+                            (m0.nvv[0] + m0.nvv[1] + m0.nvv[2])) /
+                   (m0.nvv[0] + m0.nvv[1] + m0.nvv[2]);
+          out(5) = step.Fraction(rd.nu);
+        });
+    const auto h = ToHost(out);
+    INFO("c = " << h[5]);
+    CHECK(h[0] < 1.0e-13);
+    CHECK(h[1] <= 3);
+    CHECK(h[2] <= 3);
+    CHECK(h[3] < 1.0e-13);
+    CHECK(h[4] < 1.0e-13);
   }
 }

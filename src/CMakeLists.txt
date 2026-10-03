@@ -49,6 +49,7 @@ set (SRC_LIST
   kinetics/semi_lagrangian.hpp
   kinetics/tt_linalg.hpp
   kinetics/tt_moments.hpp
+  kinetics/tt_relax.hpp
   kinetics/tt_tensor.hpp
   kinetics/velocity_grid.hpp
 

@@ -244,6 +244,33 @@ std::vector<Real> HistoryRankSums(MeshData<Real> *md) {
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn  std::vector<Real> Kinetics::HistoryRoundSums
+//! \brief representation = tt, over the last hydro step and all interior cells: sum of
+//! relative discarded norms of the roundings, rank-cap hits, non-converged SVDs.
+std::vector<Real> HistoryRoundSums(MeshData<Real> *md) {
+  constexpr int NSUM = 3;
+  auto pm = md->GetParentPointer();
+  static auto desc = MakePackDescriptor<fields::tt_round>(pm->resolved_packages.get());
+  auto v = desc.GetPack(md);
+  std::vector<Real> sums(NSUM, 0.0);
+  if (v.GetNBlocks() == 0) return sums;
+  using rt =
+      RiotFlatReduce::ReductionType<RiotUtils::GlobalSum<Real, Kokkos::HostSpace, NSUM>>;
+  auto space = rt::GetIndexSpace(IndexDomain::interior, v.GetNBlocks(), md);
+  const auto result = rt::four_d(
+      "Kinetics::HistoryRoundSums", space,
+      KOKKOS_LAMBDA(const int b, const int k, const int j, const int i,
+                    RiotUtils::array_type<Real, NSUM> &acc) {
+        for (int a = 0; a < NSUM; ++a)
+          acc.my_array[a] += v(b, fields::tt_round(a), k, j, i);
+      });
+  Kokkos::fence();
+  for (int a = 0; a < NSUM; ++a)
+    sums[a] = result.my_array[a];
+  return sums;
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  Real Kinetics::HistoryMaxRank
 //! \brief representation = tt: largest of r1, r2 over the interior cells.
 Real HistoryMaxRank(MeshData<Real> *md) {

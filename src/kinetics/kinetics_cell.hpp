@@ -104,8 +104,7 @@ struct CellKind {
 
 inline CellKind GetCellKind(const StateDescriptor *pkg) {
   CellKind c{GetRepresentation(pkg) == Representation::tt,
-             pkg->Param<VelocityGrid>("grid"),
-             TT::TTLayout{{0, 0, 0}, 0}};
+             pkg->Param<VelocityGrid>("grid"), TT::TTLayout{{0, 0, 0}, 0}};
   if (c.tt) c.L = pkg->Param<TT::TTLayout>("tt_layout");
   return c;
 }

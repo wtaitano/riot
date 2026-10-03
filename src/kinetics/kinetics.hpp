@@ -55,6 +55,9 @@ VARIABLE_VECTOR(kinetics, stress, false, 6); // xx, yy, zz, xy, xz, yz
 VARIABLE_VECTOR(kinetics, heat_flux, false, 3);
 VARIABLE_SCALAR(kinetics, eq_fallback, false); // 0 if the equilibrium solve converged
 VARIABLE_VECTOR(kinetics, tt_rank, false, 2);  // representation = tt: (r1, r2)
+// representation = tt, per cell over the last hydro step: sum of relative discarded
+// norms of the roundings, rank-cap hits, non-converged SVDs.
+VARIABLE_VECTOR(kinetics, tt_round, false, 3);
 } // namespace fields
 
 // Particle physics constants of the single species, derived from the hydro material.
@@ -73,7 +76,7 @@ enum class Integrator { sl_dirk2, strang };
 
 // One BGK relaxation step of all interior cells (bgk.cpp).
 TaskStatus Relax(MeshData<Real> *md, const RelaxationStep step);
-// Clear kinetics.eq_fallback (bgk.cpp); Relax only sets it.
+// Clear kinetics.eq_fallback (and kinetics.tt_round) (bgk.cpp); Relax only adds to them.
 TaskStatus ResetFallbackFlags(MeshData<Real> *md);
 // Abort if too many cells fell back to the sampled Maxwellian in the last relaxation.
 TaskStatus CheckEquilibriumFallbacks(Mesh *pm);
@@ -117,6 +120,8 @@ Real HistorySubsteps(MeshData<Real> *md);
 // are in the derived field kinetics.tt_rank.
 std::vector<Real> HistoryRankSums(MeshData<Real> *md);
 Real HistoryMaxRank(MeshData<Real> *md);
+// representation = tt: kinetics.tt_round summed over the interior cells.
+std::vector<Real> HistoryRoundSums(MeshData<Real> *md);
 
 } // namespace Kinetics
 

@@ -19,6 +19,8 @@
 
 #include "kinetics/bgk.hpp"
 #include "kinetics/kinetics.hpp"
+#include "kinetics/tt_relax.hpp"
+#include "kinetics/tt_tensor.hpp"
 #include "riot_utils/riot_loops.hpp"
 
 namespace Kinetics {
@@ -28,8 +30,63 @@ namespace Kinetics {
 //! \brief One BGK relaxation step (exact or DIRK stage) of every interior cell. Cells
 //! whose equilibrium solve did not converge relax toward the sampled Maxwellian and are
 //! flagged in kinetics.eq_fallback (the flag is only set here, never cleared).
+namespace {
+
+// representation = tt: one team per cell (team scratch level 1 holds the rounding work
+// arrays, see tt_relax.hpp); the cell is relaxed by one thread of the team.
+void RelaxTT(MeshData<Real> *md, const RelaxationStep step) {
+  auto pm = md->GetParentPointer();
+  static auto desc =
+      MakePackDescriptor<fields::f_tt, fields::eq_fallback, fields::tt_round>(
+          pm->resolved_packages.get());
+  auto v = desc.GetPack(md);
+  if (v.GetNBlocks() == 0) return;
+
+  auto pkg = pm->packages.Get(pkg_name);
+  const auto grid = pkg->Param<VelocityGrid>("grid");
+  const auto model = pkg->Param<CollisionModel>("collision_model");
+  const auto eq_params = pkg->Param<EquilibriumParams>("eq_params");
+  const Real kb_per_m = pkg->Param<Species>("species").kb_per_m;
+  const auto L = pkg->Param<TT::TTLayout>("tt_layout");
+  const auto prm = pkg->Param<TT::RoundParams>("tt_round");
+  const auto sc = TT::MakeRelaxScratch(grid, L.rcap);
+  const int nwork = sc.Size();
+  const std::size_t scratch_bytes = parthenon::ScratchPad1D<Real>::shmem_size(nwork);
+  constexpr int scratch_level = 1;
+
+  const auto ib = md->GetBoundsI(IndexDomain::interior);
+  const auto jb = md->GetBoundsJ(IndexDomain::interior);
+  const auto kb = md->GetBoundsK(IndexDomain::interior);
+  parthenon::par_for_outer(
+      DEFAULT_OUTER_LOOP_PATTERN, "Kinetics::RelaxTT", DevExecSpace(), scratch_bytes,
+      scratch_level, 0, v.GetNBlocks() - 1, kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
+      KOKKOS_LAMBDA(parthenon::team_mbr_t member, const int b, const int k, const int j,
+                    const int i) {
+        parthenon::ScratchPad1D<Real> work(member.team_scratch(scratch_level), nwork);
+        Kokkos::single(Kokkos::PerTeam(member), [&]() {
+          const auto f =
+              TT::MakeRef(TT::PackCell<decltype(v), fields::f_tt>{v, b, k, j, i}, L);
+          const auto res = TT::RelaxCellTT(grid, f, step, model, kb_per_m, eq_params, sc,
+                                           work.data(), prm);
+          if (res.relax.eq.status == EquilibriumResult::Status::fallback)
+            v(b, fields::eq_fallback(), k, j, i) = 1.0;
+          const Real rel =
+              (res.round.norm > 0.0) ? res.round.discarded / res.round.norm : 0.0;
+          v(b, fields::tt_round(0), k, j, i) += rel;
+          v(b, fields::tt_round(1), k, j, i) += res.round.cap_hit ? 1.0 : 0.0;
+          v(b, fields::tt_round(2), k, j, i) += res.round.svd_ok ? 0.0 : 1.0;
+        });
+      });
+}
+
+} // namespace
+
 TaskStatus Relax(MeshData<Real> *md, const RelaxationStep step) {
   auto pm = md->GetParentPointer();
+  if (GetRepresentation(pm->packages.Get(pkg_name).get()) == Representation::tt) {
+    RelaxTT(md, step);
+    return TaskStatus::complete;
+  }
   static auto desc =
       MakePackDescriptor<fields::f, fields::eq_fallback>(pm->resolved_packages.get());
   auto v = desc.GetPack(md);
@@ -96,17 +153,25 @@ TaskStatus CheckEquilibriumFallbacks(Mesh *pm) {
 
 //----------------------------------------------------------------------------------------
 //! \fn  TaskStatus Kinetics::ResetFallbackFlags
-//! \brief Clear kinetics.eq_fallback before the relaxations of a hydro step.
+//! \brief Clear kinetics.eq_fallback (and kinetics.tt_round) before the relaxations of a
+//! hydro step.
 TaskStatus ResetFallbackFlags(MeshData<Real> *md) {
   auto pm = md->GetParentPointer();
-  static auto desc = MakePackDescriptor<fields::eq_fallback>(pm->resolved_packages.get());
+  static auto desc = MakePackDescriptor<fields::eq_fallback, fields::tt_round>(
+      pm->resolved_packages.get());
   auto v = desc.GetPack(md);
   if (v.GetNBlocks() == 0) return TaskStatus::complete;
+  const bool tt =
+      GetRepresentation(pm->packages.Get(pkg_name).get()) == Representation::tt;
   auto space = RiotFlatLoop::GetIndexSpace(IndexDomain::entire, v.GetNBlocks(), md);
   RiotFlatLoop::four_d(
       "Kinetics::ResetFallbackFlags", space,
       KOKKOS_LAMBDA(const int b, const int k, const int j, const int i) {
         v(b, fields::eq_fallback(), k, j, i) = 0.0;
+        if (tt) {
+          for (int a = 0; a < 3; ++a)
+            v(b, fields::tt_round(a), k, j, i) = 0.0;
+        }
       });
   return TaskStatus::complete;
 }

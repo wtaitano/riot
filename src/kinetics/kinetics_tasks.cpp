@@ -92,13 +92,15 @@ TaskCollection KineticsTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
   TaskID none(0);
   const int num_partitions = pm->DefaultNumPartitions();
   auto pkg = pm->packages.Get(pkg_name);
-  PARTHENON_REQUIRE(GetRepresentation(pkg.get()) == Representation::dense,
-                    "kinetics: representation = tt cannot evolve f yet (S1 steps 3-5); "
-                    "only nlim = 0 runs (initialization and outputs) are supported");
 
   // Registers: k0 shares memory with base; k1 is a separate copy of f.
-  static const std::vector<std::string> names = {fields::f::name(),
-                                                 fields::eq_fallback::name()};
+  const bool tt = GetRepresentation(pkg.get()) == Representation::tt;
+  PARTHENON_REQUIRE(!tt || !pkg->Param<bool>("streaming"),
+                    "kinetics: representation = tt needs kinetics/streaming = false "
+                    "until tensor-train streaming is implemented (S1 step 4)");
+  std::vector<std::string> names = {tt ? fields::f_tt::name() : fields::f::name(),
+                                    fields::eq_fallback::name()};
+  if (tt) names.push_back(fields::tt_round::name());
   auto &base = pm->mesh_data.Get();
   pm->mesh_data.AddShallow(k0_name, base, names);
   pm->mesh_data.Add(k1_name, pm->mesh_data.Get(k0_name));
@@ -138,13 +140,27 @@ TaskCollection KineticsTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
     if (merge) steps.emplace_back(0.5 * h, no_relax);
   }
 
-  // kinetics.eq_fallback is OneCopy, so k0 and k1 share it.
+  // kinetics.eq_fallback (and tt_round) are OneCopy, so k0 and k1 share them.
   if (collide) {
     TaskRegion &reset_region = tc.AddRegion(num_partitions);
     for (int i = 0; i < num_partitions; ++i) {
       auto &k0 = pm->mesh_data.GetOrAdd(k0_name, i);
       reset_region[i].AddTask(none, ResetFallbackFlags, k0.get());
     }
+  }
+
+  // kinetics/streaming = false: the relaxations of the same sequence, in place on k0
+  // (0D tests; the substeps still follow the streaming limit).
+  if (!pkg->Param<bool>("streaming")) {
+    for (const auto &[hs, relax] : steps) {
+      if (!relax) continue;
+      TaskRegion &region = tc.AddRegion(num_partitions);
+      for (int i = 0; i < num_partitions; ++i) {
+        auto &k0 = pm->mesh_data.GetOrAdd(k0_name, i);
+        region[i].AddTask(none, Relax, k0.get(), *relax);
+      }
+    }
+    steps.clear();
   }
 
   int cur = 0; // register holding the current f

@@ -188,6 +188,11 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
       "Streaming + collision integrator: characteristic IMEX-RK (sl_dirk2) or Strang");
   params.Add("integrator",
              (integrator == "strang") ? Integrator::strang : Integrator::sl_dirk2);
+  const bool streaming =
+      pin->GetOrAddBoolean(input_block, "streaming", true,
+                           "Stream f in space; false keeps only the collisions (0D "
+                           "relaxation tests), with the same substeps");
+  params.Add("streaming", streaming);
   params.Add("merge_half_steps",
              pin->GetOrAddBoolean(input_block, "merge_half_steps", true,
                                   "strang: merge adjacent half steps of substeps"));
@@ -248,6 +253,10 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
                  MetadataOperatorSplit},
                 std::vector<int>({2}));
     pkg->AddField<fields::tt_rank>(m2);
+    Metadata m3r({Metadata::Cell, Metadata::Derived, Metadata::OneCopy, MetadataKinetics,
+                  MetadataOperatorSplit},
+                 std::vector<int>({3}));
+    pkg->AddField<fields::tt_round>(m3r);
   }
 
   // Boundary conditions (needs grid, eq_params and species)
@@ -265,6 +274,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   if (tt) {
     hst_vecs.emplace_back(parthenon::HistoryOutputVec(
         UserHistoryOperation::sum, HistoryRankSums, "kinetics_tt_ranks"));
+    hst_vecs.emplace_back(parthenon::HistoryOutputVec(
+        UserHistoryOperation::sum, HistoryRoundSums, "kinetics_tt_round"));
   }
   pkg->AddParam<>(parthenon::hist_vec_param_key, hst_vecs);
   parthenon::HstVar_list hst_vars = {};
