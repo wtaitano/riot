@@ -86,7 +86,11 @@ cases = {
     "specular": (
         "kinetics/sod",
         box
-        + ["kinetics/ix1_bc=specular", "kinetics/ox1_bc=specular", "kinetics/nu0=1.0e4"],
+        + [
+            "kinetics/ix1_bc=specular",
+            "kinetics/ox1_bc=specular",
+            "kinetics/nu0=1.0e4",
+        ],
     ),
     "diffuse": (
         "kinetics/sod",
@@ -116,7 +120,9 @@ def pid(case, rep, tag=""):
 
 
 def run(**kwargs):
-    ids = [pid(c, r) for c in cases for r in ("dense", "tt")] + [pid("sod_nu4", "tt", "_loose")]
+    ids = [pid(c, r) for c in cases for r in ("dense", "tt")] + [
+        pid("sod_nu4", "tt", "_loose")
+    ]
     clean_outputs(*ids)
     for deck in sorted({d for d, _ in cases.values()}):
         riot.generate(deck + ".py")
@@ -181,13 +187,18 @@ def analyze():
                 np.max(np.abs(hd[:, cd[n]] - ht[:, ct[n]]) / np.abs(hd[:, cd[n]]))
                 for n in ("kinetics_sums_0", "kinetics_sums_4", "kinetics_sums_5")
             )
-        caps = ht[:, ct["kinetics_tt_round_1"]].sum() + ht[:, ct["kinetics_tt_round_2"]].sum()
+        caps = (
+            ht[:, ct["kinetics_tt_round_1"]].sum()
+            + ht[:, ct["kinetics_tt_round_2"]].sum()
+        )
         logger.info(
             f"{case}: moments {e:.2e}, history {eh:.2e}, max rank "
             f"{ht[:, ct['kinetics_tt_max_rank']].max():.0f}, cap/svd {caps:.0f}"
         )
         if e > tol or eh > tol or caps > 0:
-            logger.warning(f"{case}: tt differs from dense (moments {e:.2e}, history {eh:.2e}, cap/svd {caps})")
+            logger.warning(
+                f"{case}: tt differs from dense (moments {e:.2e}, history {eh:.2e}, cap/svd {caps})"
+            )
             ok = False
     e_tight = moment_diff(pid("sod_nu4", "dense"), pid("sod_nu4", "tt"))
     e_loose = moment_diff(pid("sod_nu4", "dense"), pid("sod_nu4", "tt", "_loose"))
