@@ -62,6 +62,7 @@ namespace {
 
 constexpr char k0_name[] = "kinetics_k0";
 constexpr char k1_name[] = "kinetics_k1";
+constexpr char k2_name[] = "kinetics_k2"; // multi-D tensor-train sweeps only
 
 // f <- f of another register (interior; ghosts are refilled by the next exchange). For
 // representation = tt the whole kinetics.f_tt vector (ranks and core slots) is copied.
@@ -104,15 +105,15 @@ TaskCollection KineticsTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
 
   // Registers: k0 shares memory with base; k1 is a separate copy of f.
   const bool tt = GetRepresentation(pkg.get()) == Representation::tt;
-  PARTHENON_REQUIRE(!tt || !pkg->Param<bool>("streaming") || pm->ndim == 1,
-                    "kinetics: representation = tt streams only on 1D meshes so far "
-                    "(multi-D sweeps: S1 step 6); use kinetics/streaming = false");
+
   std::vector<std::string> names = {tt ? fields::f_tt::name() : fields::f::name(),
                                     fields::eq_fallback::name()};
   if (tt) names.push_back(fields::tt_round::name());
   auto &base = pm->mesh_data.Get();
   pm->mesh_data.AddShallow(k0_name, base, names);
   pm->mesh_data.Add(k1_name, pm->mesh_data.Get(k0_name));
+  const bool sweeps = tt && pm->ndim > 1;
+  if (sweeps) pm->mesh_data.Add(k2_name, pm->mesh_data.Get(k0_name));
 
   const auto model = pkg->Param<CollisionModel>("collision_model");
   const bool collide =
@@ -183,7 +184,8 @@ TaskCollection KineticsTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
       auto recv =
           tl.AddTask(none, parthenon::StartReceiveBoundBufs<BoundaryType::any>, src);
       auto bc = parthenon::AddBoundaryExchangeTasks(recv, tl, src, pm->multilevel);
-      auto stream = tl.AddTask(bc, Stream, src.get(), dst.get(), hs);
+      MeshData<Real> *tmp = sweeps ? pm->mesh_data.GetOrAdd(k2_name, i).get() : nullptr;
+      auto stream = tl.AddTask(bc, Stream, src.get(), tmp, dst.get(), hs);
       if (relax) tl.AddTask(stream, Relax, dst.get(), *relax);
     }
     cur = 1 - cur;

@@ -29,7 +29,9 @@
 //   f* = round(g + w_+ f_{i+1}).
 //
 // Without rounding this equals the dense update exactly. Only the unlimited weights are
-// available (a limiter has no TT form).
+// available (a limiter has no TT form). On multi-D meshes the caller sweeps x1, x2, x3 in
+// turn (semi_lagrangian.cpp, StreamTT); the dense tensor-product stencil factorizes into
+// these sweeps exactly.
 
 #include <parthenon/package.hpp>
 

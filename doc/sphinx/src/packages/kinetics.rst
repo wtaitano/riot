@@ -236,15 +236,18 @@ derived output fields are the same as for ``dense``, plus ``kinetics.tt_rank``
 
 .. warning::
 
-   Work in progress: in this version ``tt`` runs on 1D meshes (any 3V grid), with both
-   integrators and all four kinetic boundary conditions. Each relaxation forms
+   Work in progress: in this version ``tt`` runs on 1D, 2D and 3D meshes (any 3V grid),
+   with both integrators and all four kinetic boundary conditions. On 2D/3D meshes the
+   streaming step is a sequence of :math:`x_1, x_2, x_3` sweeps (each sweep covers one
+   ghost layer along the directions still to come), which before rounding equals the
+   dense single-pass tensor-product update; one ghost exchange per step is kept. Each relaxation forms
    :math:`(1-c)f + cM` (ranks + 1) and rounds it once. Streaming of a cell along
    :math:`x` is two rounded block sums, :math:`\mathrm{round}(w_0 f_i + w_- f_{i-1})`
    then :math:`+\,w_+ f_{i+1}`, where the weights depend only on :math:`v_x` and so
    scale one core. Specular walls reverse the wall-normal core exactly; diffuse walls
    build the ghost as a masked sum of the boundary cell and the wall Maxwellian and
-   round it. Multi-D meshes, mesh refinement and ``sl_limiter = minmax`` (a pointwise
-   limiter has no tensor-train form) are not available yet.
+   round it. Mesh refinement and ``sl_limiter = minmax`` (a pointwise limiter has no
+   tensor-train form) are not available.
 
    Every rounding adds an error of up to ``tt_eps`` (relative), and these errors
    accumulate over the steps: a substep of ``sl_dirk2`` rounds 6 times (3 per stage).

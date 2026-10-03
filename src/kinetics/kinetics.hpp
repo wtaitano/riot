@@ -82,7 +82,9 @@ TaskStatus ResetFallbackFlags(MeshData<Real> *md);
 TaskStatus CheckEquilibriumFallbacks(Mesh *pm);
 
 // One semi-Lagrangian streaming step of length h, dst <- SL(src) (semi_lagrangian.cpp).
-TaskStatus Stream(MeshData<Real> *src, MeshData<Real> *dst, const Real h);
+// tmp: scratch register of the multi-D tensor-train sweeps (unused otherwise).
+TaskStatus Stream(MeshData<Real> *src, MeshData<Real> *tmp, MeshData<Real> *dst,
+                  const Real h);
 // Largest substep allowed by kinetics/cfl over the whole mesh (MPI-reduced).
 Real MaxStreamingStep(Mesh *pm);
 
