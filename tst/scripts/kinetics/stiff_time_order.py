@@ -22,6 +22,10 @@
 #     first-order scheme from a second-order one,
 #   * mass and energy are conserved to 1e-10 (measured up to 7e-12: the equilibrium-solve
 #     tolerance eq_tol = 1e-13 accumulated over the relaxations, as in R2).
+# The same sweep is repeated with representation = tt (tt_eps = 1e-14, S1 step 5): the
+# same order criteria and conservation tolerance, and the TT density must equal the dense
+# density to 1e-9 on every mesh (measured <= 3.4e-11), so TT rounding does not change the
+# order of either integrator.
 
 import logging
 
@@ -41,31 +45,40 @@ min_order_dirk = 1.8
 max_order_strang = 1.3
 
 
-def pid(integrator, nx):
-    return f"kinetics_r10_{integrator}_n{nx}"
+reps = ["dense", "tt"]
+tol_tt = 1.0e-9
+
+
+def pid(integrator, nx, rep="dense"):
+    return f"kinetics_r10_{integrator}_n{nx}" + ("" if rep == "dense" else "_tt")
 
 
 def run(**kwargs):
-    clean_outputs(*[pid(i, nx) for i in integrators for nx in resolutions])
+    clean_outputs(
+        *[pid(i, nx, r) for i in integrators for nx in resolutions for r in reps]
+    )
     riot.generate(input_id + ".py")
-    for integrator in integrators:
-        for nx in resolutions:
-            riot.run(
-                input_id + ".rin",
-                [
-                    "parthenon/job/problem_id=" + pid(integrator, nx),
-                    f"kinetics/integrator={integrator}",
-                    f"kinetics/nu0={nu}",
-                    "kinetics/nv1=16",
-                    "kinetics/nv2=8",
-                    "kinetics/nv3=8",
-                    "kinetics/min_vth_over_dv=0",
-                    "kinetics/edge_mass_warn=1",
-                    f"parthenon/mesh/nx1={nx}",
-                    f"parthenon/meshblock/nx1={nx // 4}",
-                    f"parthenon/time/dt_force={0.64 / nx}",
-                ],
-            )
+    for rep in reps:
+        for integrator in integrators:
+            for nx in resolutions:
+                riot.run(
+                    input_id + ".rin",
+                    [
+                        "parthenon/job/problem_id=" + pid(integrator, nx, rep),
+                        f"kinetics/representation={rep}",
+                        "kinetics/tt_eps=1e-14",
+                        f"kinetics/integrator={integrator}",
+                        f"kinetics/nu0={nu}",
+                        "kinetics/nv1=16",
+                        "kinetics/nv2=8",
+                        "kinetics/nv3=8",
+                        "kinetics/min_vth_over_dv=0",
+                        "kinetics/edge_mass_warn=1",
+                        f"parthenon/mesh/nx1={nx}",
+                        f"parthenon/meshblock/nx1={nx // 4}",
+                        f"parthenon/time/dt_force={0.64 / nx}",
+                    ],
+                )
 
 
 def history(problem_id):
@@ -80,13 +93,18 @@ def history(problem_id):
     return np.loadtxt(fname), cols
 
 
-def orders(integrator):
-    rho = []
-    for nx in resolutions:
-        _, r = read_line(
-            phdf(f"build/src/{pid(integrator, nx)}.out1.final.phdf"), "kinetics.rho"
-        )
-        rho.append(r)
+def densities(integrator, rep):
+    return [
+        read_line(
+            phdf(f"build/src/{pid(integrator, nx, rep)}.out1.final.phdf"),
+            "kinetics.rho",
+        )[1]
+        for nx in resolutions
+    ]
+
+
+def orders(integrator, rep="dense"):
+    rho = densities(integrator, rep)
     diffs = [
         np.mean(np.abs(rho[i] - 0.5 * (rho[i + 1][0::2] + rho[i + 1][1::2])))
         for i in range(len(rho) - 1)
@@ -96,28 +114,46 @@ def orders(integrator):
 
 def analyze():
     ok = True
-    for integrator in integrators:
-        rates, diffs = orders(integrator)
-        logger.debug(f"{integrator}: differences {diffs}, observed orders {rates}")
-        if integrator == "sl_dirk2" and min(rates) < min_order_dirk:
-            logger.warning(f"sl_dirk2: observed orders {rates} below {min_order_dirk}")
-            ok = False
-        if integrator == "strang" and max(rates) > max_order_strang:
-            logger.warning(
-                f"strang: observed orders {rates} above {max_order_strang}; "
-                "the order comparator does not resolve the stiff regime"
-            )
-            ok = False
-        for nx in resolutions:
-            h, cols = history(pid(integrator, nx))
-            nuh = nu * h[0, 1] / h[1:, cols["kinetics_substeps"]].max()
-            if nuh < 10.0:
-                logger.warning(f"{pid(integrator, nx)}: nu h = {nuh:.3g} is not stiff")
+    for rep in reps:
+        for integrator in integrators:
+            rates, diffs = orders(integrator, rep)
+            logger.debug(f"{rep} {integrator}: differences {diffs}, orders {rates}")
+            if integrator == "sl_dirk2" and min(rates) < min_order_dirk:
+                logger.warning(
+                    f"{rep} sl_dirk2: observed orders {rates} below {min_order_dirk}"
+                )
                 ok = False
-            for name in ("kinetics_sums_0", "kinetics_sums_4"):
-                a = h[:, cols[name]]
-                drift = np.max(np.abs(a - a[0])) / a[0]
-                if drift > 1.0e-10:
-                    logger.warning(f"{pid(integrator, nx)}: {name} drift {drift:.3e}")
+            if integrator == "strang" and max(rates) > max_order_strang:
+                logger.warning(
+                    f"{rep} strang: observed orders {rates} above {max_order_strang}; "
+                    "the order comparator does not resolve the stiff regime"
+                )
+                ok = False
+            for nx in resolutions:
+                h, cols = history(pid(integrator, nx, rep))
+                nuh = nu * h[0, 1] / h[1:, cols["kinetics_substeps"]].max()
+                if nuh < 10.0:
+                    logger.warning(
+                        f"{pid(integrator, nx, rep)}: nu h = {nuh:.3g} is not stiff"
+                    )
                     ok = False
+                for name in ("kinetics_sums_0", "kinetics_sums_4"):
+                    a = h[:, cols[name]]
+                    drift = np.max(np.abs(a - a[0])) / a[0]
+                    if drift > 1.0e-10:
+                        logger.warning(
+                            f"{pid(integrator, nx, rep)}: {name} drift {drift:.3e}"
+                        )
+                        ok = False
+    for integrator in integrators:
+        for nx, d, t in zip(
+            resolutions, densities(integrator, "dense"), densities(integrator, "tt")
+        ):
+            e = np.max(np.abs(d - t)) / np.max(np.abs(d))
+            logger.debug(f"{integrator} n{nx}: tt vs dense density {e:.3e}")
+            if e > tol_tt:
+                logger.warning(
+                    f"{integrator} n{nx}: tt density differs from dense by {e:.3e}"
+                )
+                ok = False
     return ok

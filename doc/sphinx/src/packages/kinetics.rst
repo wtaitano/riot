@@ -247,9 +247,13 @@ derived output fields are the same as for ``dense``, plus ``kinetics.tt_rank``
    limiter has no tensor-train form) are not available yet.
 
    Every rounding adds an error of up to ``tt_eps`` (relative), and these errors
-   accumulate over the steps. To compare with the dense solver at roundoff level use
+   accumulate over the steps: a substep of ``sl_dirk2`` rounds 6 times (3 per stage).
+   Measured on a smooth wave, the moment error after :math:`N` roundings is
+   0.2–0.8 :math:`N\,` ``tt_eps``, so refining the time step at fixed ``tt_eps``
+   increases the TT error. To compare with the dense solver at roundoff level use
    ``tt_eps = 1e-14``; with ``1e-10`` the moments of a short 1D Sod run differ by a
-   few 1e-9.
+   few 1e-9. The time order of both integrators is unchanged in the stiff regime
+   (``sl_dirk2`` 1.98/1.99, ``strang`` 1.06/0.98, the same as dense).
 
 .. list-table:: Tensor-train parameters in the ``<kinetics>`` block.
    :class: wraptable
