@@ -92,6 +92,9 @@ TaskCollection KineticsTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
   TaskID none(0);
   const int num_partitions = pm->DefaultNumPartitions();
   auto pkg = pm->packages.Get(pkg_name);
+  PARTHENON_REQUIRE(GetRepresentation(pkg.get()) == Representation::dense,
+                    "kinetics: representation = tt cannot evolve f yet (S1 steps 3-5); "
+                    "only nlim = 0 runs (initialization and outputs) are supported");
 
   // Registers: k0 shares memory with base; k1 is a separate copy of f.
   static const std::vector<std::string> names = {fields::f::name(),

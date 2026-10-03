@@ -23,6 +23,7 @@
 #include "kinetics/kinetics.hpp"
 #include "kinetics/kinetics_bcs.hpp"
 #include "kinetics/semi_lagrangian.hpp"
+#include "kinetics/tt_tensor.hpp"
 #include "materials/materials.hpp"
 
 namespace Kinetics {
@@ -62,12 +63,11 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   auto pkg = std::make_shared<StateDescriptor>(pkg_name);
   Params &params = pkg->AllParams();
 
-  const std::string representation = pin->GetOrAddString(
-      input_block, "representation", "dense", {"dense", "tt"},
-      "Velocity-space representation of f (only dense is implemented)");
-  PARTHENON_REQUIRE(representation == "dense",
-                    "kinetics: representation = tt is not implemented yet");
+  const std::string representation =
+      pin->GetOrAddString(input_block, "representation", "dense", {"dense", "tt"},
+                          "Velocity-space representation of f: dense or tensor train");
   params.Add("representation", representation);
+  const bool tt = (representation == "tt");
 
   // Gas
   const Species species = GasFromMaterial(pin);
@@ -84,6 +84,33 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   }
   const VelocityGrid grid = MakeVelocityGrid(nv, vmin, vmax);
   params.Add("grid", grid);
+
+  // Tensor-train representation (S1_DESIGN.md)
+  if (tt) {
+    TT::RoundParams round;
+    round.eps = pin->GetOrAddReal(input_block, "tt_eps", 1.0e-8,
+                                  "Relative TT rounding tolerance per rounding; 0 = "
+                                  "fixed rank tt_rank_max");
+    PARTHENON_REQUIRE(round.eps >= 0.0 && round.eps < 1.0,
+                      "kinetics: tt_eps must be in [0, 1)");
+    params.Add("tt_round", round);
+    const int rcap = pin->GetOrAddInteger(input_block, "tt_rank_max", 16,
+                                          "Largest TT rank (sets the storage per cell)");
+    PARTHENON_REQUIRE(rcap >= 2 && rcap <= TT::kMaxRank,
+                      "kinetics: tt_rank_max must be in [2, " +
+                          std::to_string(TT::kMaxRank) + "]");
+    params.Add("tt_layout", TT::MakeLayout(grid, rcap));
+    const std::string diag =
+        pin->GetOrAddString(input_block, "tt_diag", "exact", {"exact", "cross"},
+                            "Nonlinear diagnostics of a TT f: exact (decompress) or "
+                            "cross (DEIM cross approximation)");
+    PARTHENON_REQUIRE(diag == "exact",
+                      "kinetics: tt_diag = cross is not implemented yet (S1 step 8)");
+    params.Add("tt_diag", diag);
+    PARTHENON_REQUIRE(pin->GetOrAddString("parthenon/mesh", "refinement", "none") ==
+                          "none",
+                      "kinetics: representation = tt does not support mesh refinement");
+  }
 
   // Discrete equilibrium solve
   EquilibriumParams eq;
@@ -152,6 +179,9 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   const Real cfl = pin->GetOrAddReal(input_block, "cfl", 1.0,
                                      "Max cells moved per kinetic substep (<= 1)");
   PARTHENON_REQUIRE(cfl > 0.0 && cfl <= 1.0, "kinetics: cfl must be in (0, 1]");
+  PARTHENON_REQUIRE(!(tt && sl.limiter),
+                    "kinetics: representation = tt needs sl_limiter = none (a pointwise "
+                    "limiter has no tensor-train form) or sl_order = 1");
   params.Add("cfl", cfl);
   const std::string integrator = pin->GetOrAddString(
       input_block, "integrator", "sl_dirk2", {"sl_dirk2", "strang"},
@@ -165,10 +195,17 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   PARTHENON_REQUIRE(Globals::nghost >= 1, "kinetics: needs at least one ghost cell");
 
   // Initialization from the hydro state
-  const std::string init =
-      pin->GetOrAddString(input_block, "init", "equilibrium",
-                          {"equilibrium", "bimaxwellian"}, "Initial distribution");
+  const std::string init = pin->GetOrAddString(
+      input_block, "init", "equilibrium",
+      {"equilibrium", "bimaxwellian", "two_maxwellian"}, "Initial distribution");
   params.Add("init", init);
+  const Real init_drift = pin->GetOrAddReal(
+      input_block, "init_drift", 1.0,
+      "two_maxwellian: drift of each half along init_axis, in units of sqrt(k_B T / m)");
+  PARTHENON_REQUIRE(init_drift >= 0.0 && init_drift * init_drift < 3.0,
+                    "kinetics: init_drift must be in [0, sqrt(3)) so that the two "
+                    "Maxwellians keep a positive temperature");
+  params.Add("init_drift", init_drift);
   const Real init_T_ratio = pin->GetOrAddReal(
       input_block, "init_T_ratio", 1.0, "bimaxwellian: T_parallel / T_perpendicular");
   const int init_axis = pin->GetOrAddInteger(input_block, "init_axis", 1,
@@ -181,10 +218,15 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   // Fields
   auto MetadataKinetics = pkg->GetMetadataFlag();
   auto MetadataOperatorSplit = Metadata::GetOrAddFlag(riot::metadata::OperatorSplit);
+  const int ncomp_f = tt ? params.Get<TT::TTLayout>("tt_layout").Size() : grid.Size();
   Metadata mf({Metadata::Cell, Metadata::Independent, Metadata::FillGhost,
                Metadata::Restart, MetadataKinetics, MetadataOperatorSplit},
-              std::vector<int>({grid.Size()}));
-  pkg->AddField<fields::f>(mf);
+              std::vector<int>({ncomp_f}));
+  if (tt) {
+    pkg->AddField<fields::f_tt>(mf);
+  } else {
+    pkg->AddField<fields::f>(mf);
+  }
 
   Metadata ms({Metadata::Cell, Metadata::Derived, Metadata::OneCopy, MetadataKinetics,
                MetadataOperatorSplit});
@@ -201,6 +243,12 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
                MetadataOperatorSplit},
               std::vector<int>({6}));
   pkg->AddField<fields::stress>(m6);
+  if (tt) {
+    Metadata m2({Metadata::Cell, Metadata::Derived, Metadata::OneCopy, MetadataKinetics,
+                 MetadataOperatorSplit},
+                std::vector<int>({2}));
+    pkg->AddField<fields::tt_rank>(m2);
+  }
 
   // Boundary conditions (needs grid, eq_params and species)
   EnrollKineticBCs(pkg.get(), pin);
@@ -214,6 +262,10 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   parthenon::HstVec_list hst_vecs = {};
   hst_vecs.emplace_back(parthenon::HistoryOutputVec(UserHistoryOperation::sum,
                                                     HistorySums, "kinetics_sums"));
+  if (tt) {
+    hst_vecs.emplace_back(parthenon::HistoryOutputVec(
+        UserHistoryOperation::sum, HistoryRankSums, "kinetics_tt_ranks"));
+  }
   pkg->AddParam<>(parthenon::hist_vec_param_key, hst_vecs);
   parthenon::HstVar_list hst_vars = {};
   hst_vars.emplace_back(parthenon::HistoryOutputVar(UserHistoryOperation::min,
@@ -222,13 +274,23 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
       UserHistoryOperation::sum, HistoryFallbackCount, "kinetics_eq_fallbacks"));
   hst_vars.emplace_back(parthenon::HistoryOutputVar(
       UserHistoryOperation::max, HistorySubsteps, "kinetics_substeps"));
+  if (tt) {
+    hst_vars.emplace_back(parthenon::HistoryOutputVar(
+        UserHistoryOperation::max, HistoryMaxRank, "kinetics_tt_max_rank"));
+  }
   pkg->AddParam<>(parthenon::hist_param_key, hst_vars);
 
   if (Globals::my_rank == 0) {
     std::stringstream msg;
-    msg << "kinetics: dense f on " << nv[0] << " x " << nv[1] << " x " << nv[2]
-        << " velocity nodes; particle mass m = " << species.mass
-        << " g, k_B/m = " << species.kb_per_m << " erg/(g K)" << std::endl;
+    msg << "kinetics: " << (tt ? "tensor-train" : "dense") << " f on " << nv[0] << " x "
+        << nv[1] << " x " << nv[2] << " velocity nodes";
+    if (tt) {
+      msg << " (rank <= " << params.Get<TT::TTLayout>("tt_layout").rcap << ", eps "
+          << params.Get<TT::RoundParams>("tt_round").eps << ", " << ncomp_f
+          << " reals per cell vs " << grid.Size() << " dense)";
+    }
+    msg << "; particle mass m = " << species.mass << " g, k_B/m = " << species.kb_per_m
+        << " erg/(g K)" << std::endl;
     for (int d = 0; d < 3; ++d) {
       msg << "  v" << d + 1 << " in [" << vmin[d] << ", " << vmax[d]
           << "], dv = " << grid.dv[d] << std::endl;

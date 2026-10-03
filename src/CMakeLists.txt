@@ -40,6 +40,7 @@ set (SRC_LIST
   kinetics/kinetics.hpp
   kinetics/kinetics_bcs.cpp
   kinetics/kinetics_bcs.hpp
+  kinetics/kinetics_cell.hpp
   kinetics/kinetics_init.cpp
   kinetics/kinetics_output.cpp
   kinetics/kinetics_tasks.cpp
@@ -47,6 +48,7 @@ set (SRC_LIST
   kinetics/semi_lagrangian.cpp
   kinetics/semi_lagrangian.hpp
   kinetics/tt_linalg.hpp
+  kinetics/tt_moments.hpp
   kinetics/tt_tensor.hpp
   kinetics/velocity_grid.hpp
 

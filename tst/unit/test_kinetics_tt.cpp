@@ -25,6 +25,10 @@
 //     tolerance rank is reported as a cap hit.
 //   * A + A (rank 2r block form) rounds back to rank r with value 2A (eps = 0, the
 //     fixed-rank mode), and alpha A + beta B combines exactly.
+//   * T2: moments by core contraction (tt_moments.hpp) equal the dense node sums of the
+//     decompressed tensor (raw and central, incl. heat flux), and the decompression
+//     ForEachNode equals entrywise evaluation, for a generic rank-(3, 4) TT and for a
+//     rank-2 sum of two drifting equilibria.
 //
 // Kernels run on device in a single-iteration loop, as in test_kinetics_equilibrium.
 
@@ -39,7 +43,9 @@
 using namespace parthenon::package::prelude;
 
 #include "kinetics/equilibrium.hpp"
+#include "kinetics/moments.hpp"
 #include "kinetics/tt_linalg.hpp"
+#include "kinetics/tt_moments.hpp"
 #include "kinetics/tt_tensor.hpp"
 #include "kinetics/velocity_grid.hpp"
 
@@ -367,4 +373,71 @@ TEST_CASE("T1: sums of tensor trains round back to the exact rank",
   CHECK(h[3] <= r + 1);
   CHECK(h[4] <= r + 2);
   CHECK(h[5] < 1.0e-13);
+}
+
+TEST_CASE("T2: TT moments equal dense moments of the decompressed tensor",
+          "[kinetics][tt][T2]") {
+  const auto grid = Grid(14, 12, 10);
+  const int rcap = 4;
+  const T::TTLayout L = T::MakeLayout(grid, rcap);
+  for (const int which : {0, 1}) {
+    View a("a", L.Size()), dense("dense", grid.Size());
+    View out("out", 3); // [max raw moment error, max central error, decompression err]
+    Kokkos::parallel_for(
+        "moments", 1, KOKKOS_LAMBDA(const int) {
+          const auto A = T::MakeOutRef(T::PtrData{a.data()}, L);
+          if (which == 0) {
+            A.SetRanks(3, 4);
+            int h = 0;
+            for (int x = 0; x < grid.nv[0] * 3; ++x)
+              a.data()[L.Slot1() + x] = 1.0 + 0.5 * Hash(h++);
+            for (int x = 0; x < 3 * grid.nv[1] * 4; ++x)
+              a.data()[L.Slot2() + x] = Hash(h++);
+            for (int x = 0; x < 4 * grid.nv[2]; ++x)
+              a.data()[L.Slot3() + x] = Hash(h++);
+          } else {
+            K::Maxwellian eq[2];
+            K::EquilibriumTarget t0{0.5, {-0.8, 0.1, 0.0}, {0.9, 0.9, 0.9}};
+            K::EquilibriumTarget t1{0.5, {0.8, 0.1, 0.0}, {0.9, 0.9, 0.9}};
+            K::SolveEquilibrium(grid, t0, K::EquilibriumParams{}, eq[0]);
+            K::SolveEquilibrium(grid, t1, K::EquilibriumParams{}, eq[1]);
+            T::FillMaxwellians(grid, eq, 2, A);
+          }
+          const auto R = T::MakeRef(T::PtrData{a.data()}, L);
+          Real e_dec = 0.0;
+          T::ForEachNode(R, [&](const int i, const int j, const int k, const Real val) {
+            dense(grid.Flat(i, j, k)) = val;
+            e_dec = std::max(e_dec, std::abs(val - R(i, j, k)));
+          });
+          auto f = [&](const int n) { return dense(n); };
+          const auto rd = K::ComputeRawMoments(grid, f);
+          const auto rt = T::ComputeRawMoments(grid, R);
+          Real scale = std::abs(rd.n), e_raw = std::abs(rd.n - rt.n);
+          for (int d = 0; d < 3; ++d) {
+            scale = std::max(scale, std::max(std::abs(rd.nu[d]), std::abs(rd.nvv[d])));
+            e_raw = std::max(e_raw, std::abs(rd.nu[d] - rt.nu[d]));
+            e_raw = std::max(e_raw, std::abs(rd.nvv[d] - rt.nvv[d]));
+          }
+          const Real u[3] = {0.3, -0.2, 0.1};
+          const auto cd = K::ComputeCentralMoments(grid, f, u);
+          const auto ct = T::ComputeCentralMoments(grid, R, u);
+          Real cscale = 0.0, e_c = 0.0;
+          for (int q = 0; q < 6; ++q) {
+            cscale = std::max(cscale, std::abs(cd.stress[q]));
+            e_c = std::max(e_c, std::abs(cd.stress[q] - ct.stress[q]));
+          }
+          for (int d = 0; d < 3; ++d) {
+            cscale = std::max(cscale, std::abs(cd.heat[d]));
+            e_c = std::max(e_c, std::abs(cd.heat[d] - ct.heat[d]));
+          }
+          out(0) = e_raw / scale;
+          out(1) = e_c / cscale;
+          out(2) = e_dec;
+        });
+    const auto h = ToHost(out);
+    INFO((which == 0 ? "generic rank (3, 4)" : "two drifting equilibria"));
+    CHECK(h[0] < 1.0e-13);
+    CHECK(h[1] < 1.0e-13);
+    CHECK(h[2] < 1.0e-14);
+  }
 }

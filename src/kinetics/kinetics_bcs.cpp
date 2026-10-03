@@ -237,6 +237,13 @@ void EnrollKineticBCs(StateDescriptor *pkg, ParameterInput *pin) {
                       "kinetics/" + faces[f] +
                           "_bc must be periodic exactly when the mesh face is");
     if (name == "periodic" || d >= ndim) continue;
+    // In the tensor-train representation the kinetic BCs come with streaming (S1 step
+    // 4); until then the mesh BC fills the ghosts of kinetics.f_tt.
+    PARTHENON_REQUIRE(
+        pkg->Param<std::string>("representation") == "dense" ||
+            (name == "outflow" && mesh_bc == "outflow"),
+        "kinetics: representation = tt supports only periodic and outflow faces so far "
+        "(kinetic and mesh BC both outflow)");
 
     KineticBC type = KineticBC::outflow;
     if (name == "specular") {

@@ -160,6 +160,52 @@ def free_streaming_moments(x, t, initial_state, vs, dvs):
     return n, ux, theta
 
 
+def tt_decompress(fname, nv, rcap, var="kinetics.f_tt"):
+    """Full f from the tensor-train cores of a restart file (layout of
+    src/kinetics/tt_tensor.hpp: [r1, r2, G1 (n0 x r1), G2 (r1 x n1 x r2), G3 (r2 x n2)],
+    column-major, slots sized for rcap). Returns f with the dense layout
+    (nblocks, nv0 nv1 nv2, nz, ny, nx), flat index (iz nv1 + iy) nv0 + ix, and the list of
+    (r1, r2) per cell."""
+    import h5py
+
+    with h5py.File(fname, "r") as h:
+        c = np.array(h[var])
+    n0, n1, n2 = nv
+    s1, s2 = 2, 2 + n0 * rcap
+    s3 = s2 + rcap * n1 * rcap
+    nb, _, nz, ny, nx = c.shape
+    out = np.zeros((nb, n0 * n1 * n2, nz, ny, nx))
+    ranks = []
+    for b in range(nb):
+        for k in range(nz):
+            for j in range(ny):
+                for i in range(nx):
+                    d = c[b, :, k, j, i]
+                    r1, r2 = int(d[0]), int(d[1])
+                    ranks.append((r1, r2))
+                    G1 = d[s1 : s1 + n0 * r1].reshape(r1, n0).T
+                    G2 = (
+                        d[s2 : s2 + r1 * n1 * r2].reshape(r2, n1, r1).transpose(2, 1, 0)
+                    )
+                    G3 = d[s3 : s3 + r2 * n2].reshape(n2, r2).T
+                    T = np.einsum("ia,ajb,bk->ijk", G1, G2, G3)
+                    out[b, :, k, j, i] = T.transpose(2, 1, 0).reshape(-1)
+    return out, ranks
+
+
+def read_history(problem_id):
+    """History array and {column name: index} of build/src/<problem_id>.out2.hst."""
+    fname = f"build/src/{problem_id}.out2.hst"
+    with open(fname) as fh:
+        header = [line for line in fh if line.startswith("# [1]")][0]
+    cols = {}
+    for tok in header[2:].split():
+        if "=" in tok:
+            idx, name = tok.split("=")
+            cols[name] = int(idx[1:-1]) - 1
+    return np.atleast_2d(np.loadtxt(fname)), cols
+
+
 def read_line(dump, var, component=None):
     """Cell centers (sorted) and values of a variable on a 1D mesh."""
     x = np.asarray(dump.x).ravel()

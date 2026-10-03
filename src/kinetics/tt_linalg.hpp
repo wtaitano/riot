@@ -139,16 +139,16 @@ KOKKOS_INLINE_FUNCTION int JacobiSVD(const Mat W, const Mat V, Real *s,
           beta += W(i, q) * W(i, q);
           gamma += W(i, p) * W(i, q);
         }
-        if (gamma == 0.0 ||
-            std::abs(gamma) <= tol * std::sqrt(alpha) * std::sqrt(beta))
+        if (gamma == 0.0 || std::abs(gamma) <= tol * std::sqrt(alpha) * std::sqrt(beta))
           continue;
         rotated = true;
         const Real zeta = (beta - alpha) / (2.0 * gamma);
         // t = sign(zeta) / (|zeta| + sqrt(1 + zeta^2)); 1 / (2 zeta) once zeta^2 would
         // overflow (the two agree to roundoff there).
         const Real az = std::abs(zeta);
-        const Real t = ((zeta >= 0.0) ? 1.0 : -1.0) *
-                       ((az > 1.0e150) ? 0.5 / az : 1.0 / (az + std::sqrt(1.0 + az * az)));
+        const Real t =
+            ((zeta >= 0.0) ? 1.0 : -1.0) *
+            ((az > 1.0e150) ? 0.5 / az : 1.0 / (az + std::sqrt(1.0 + az * az)));
         const Real c = 1.0 / std::sqrt(1.0 + t * t);
         const Real sn = c * t;
         for (int i = 0; i < W.m; ++i) {

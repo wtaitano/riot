@@ -182,8 +182,10 @@ The package is enabled with ``kinetics = true`` in the ``<physics>`` block.
    * - init
      - string
      - ``equilibrium``
-     - ``equilibrium`` or ``bimaxwellian`` (``init_T_ratio``
-       :math:`=T_\parallel/T_\perp`, ``init_axis``).
+     - ``equilibrium``, ``bimaxwellian`` (``init_T_ratio``
+       :math:`=T_\parallel/T_\perp`, ``init_axis``) or ``two_maxwellian`` (two halves
+       drifting by :math:`\mp` ``init_drift`` :math:`\sqrt{k_BT/m}` along
+       ``init_axis``, with the hydro density, velocity and energy).
    * - eq_tol, eq_max_iter
      - Real, int
      - ``1e-13``, ``20``
@@ -208,6 +210,62 @@ The package is enabled with ``kinetics = true`` in the ``<physics>`` block.
      - string
      - mesh-dependent
      - ``periodic``, ``outflow``, ``specular`` or ``diffuse``.
+
+Tensor-train representation
+---------------------------
+
+With ``representation = tt`` the distribution of each cell is stored as a three-core
+tensor train over :math:`(v_x, v_y, v_z)`,
+
+.. math::
+
+   f(i, j, k) = \sum_{a < r_1} \sum_{b < r_2} G_1(i, a)\, G_2(a, j, b)\, G_3(b, k),
+
+in the variable ``kinetics.f_tt`` (the ranks :math:`r_1, r_2` followed by the cores,
+sized for ``tt_rank_max``, i.e. :math:`2 + N_x r + N_y r^2 + N_z r` reals per cell
+instead of :math:`N_x N_y N_z`). The discrete equilibrium is exactly rank 1. Moments
+are exact contractions of the cores; entropy, negative mass and min :math:`f` are
+computed by decompressing each cell at history cadence (``tt_diag = exact``). The
+derived output fields are the same as for ``dense``, plus ``kinetics.tt_rank``
+:math:`(r_1, r_2)`. Design and status: ``S1_DESIGN.md`` of the kinetic project.
+
+.. warning::
+
+   Work in progress: in this version ``tt`` supports initialization and output only
+   (runs with ``parthenon/time/nlim = 0``). Streaming, collisions, the wall boundary
+   conditions and mesh refinement are not available yet, and ``sl_limiter = minmax``
+   is rejected (a pointwise limiter has no tensor-train form).
+
+.. list-table:: Tensor-train parameters in the ``<kinetics>`` block.
+   :class: wraptable
+   :header-rows: 1
+   :widths: 25 12 18 45
+
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - representation
+     - string
+     - ``dense``
+     - ``dense`` or ``tt``.
+   * - tt_eps
+     - Real
+     - ``1e-8``
+     - Relative Frobenius tolerance of each TT rounding; ``0`` truncates only at
+       ``tt_rank_max`` (fixed rank).
+   * - tt_rank_max
+     - int
+     - ``16``
+     - Largest TT rank (2 to 64); sets the storage per cell.
+   * - tt_diag
+     - string
+     - ``exact``
+     - Nonlinear diagnostics: ``exact`` (decompress). ``cross`` (DEIM cross
+       approximation) is planned.
+
+The history file adds ``kinetics_tt_ranks_0..3`` (cell count, sum of :math:`r_1`, sum of
+:math:`r_2`, cells at ``tt_rank_max``) and ``kinetics_tt_max_rank``.
 
 Output
 ------

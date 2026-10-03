@@ -28,6 +28,7 @@
 
 #include "kinetics/equilibrium.hpp"
 #include "kinetics/kinetics.hpp"
+#include "kinetics/kinetics_cell.hpp"
 #include "kinetics/moments.hpp"
 #include "kinetics/velocity_grid.hpp"
 #include "riot_utils/riot_loops.hpp"
@@ -37,7 +38,12 @@ namespace Kinetics {
 
 //----------------------------------------------------------------------------------------
 //! \fn  void Kinetics::PostInitialization
-//! \brief Fill f with the discrete equilibrium (or bi-Maxwellian) of the hydro state.
+//! \brief Fill f from the hydro state: the discrete equilibrium, a bi-Maxwellian, or two
+//! Maxwellians drifting apart along init_axis (counter-streaming, rank 2 in TT).
+//! two_maxwellian: halves of density n/2 at u -+ delta e_axis, delta = init_drift
+//! sqrt(theta), and theta' = theta - delta^2 / 3, so that n, u and the energy equal the
+//! hydro state. Each half is a discrete equilibrium, so the sum has those moments
+//! exactly on the grid.
 void PostInitialization(Mesh *pm, ParameterInput *pin, MeshData<Real> *md) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   // No early return on ranks without blocks: they must still join the collectives below.
@@ -45,13 +51,17 @@ void PostInitialization(Mesh *pm, ParameterInput *pin, MeshData<Real> *md) {
   const auto grid = pkg->Param<VelocityGrid>("grid");
   const auto species = pkg->Param<Species>("species");
   const auto eq_params = pkg->Param<EquilibriumParams>("eq_params");
-  const bool bimaxwellian = pkg->Param<std::string>("init") == "bimaxwellian";
+  const std::string init = pkg->Param<std::string>("init");
+  const bool bimaxwellian = (init == "bimaxwellian");
+  const bool two = (init == "two_maxwellian");
+  const Real drift = pkg->Param<Real>("init_drift");
+  const auto kind = GetCellKind(pkg.get());
   const Real T_ratio = pkg->Param<Real>("init_T_ratio");
   const int par_axis = pkg->Param<int>("init_axis") - 1;
 
   static auto desc =
       MakePackDescriptor<ccbulk::rho, ccbulk::velocity, ccbulk::temperature, fields::f,
-                         fields::eq_fallback>(pm->resolved_packages.get());
+                         fields::f_tt, fields::eq_fallback>(pm->resolved_packages.get());
   auto v = desc.GetPack(md);
 
   // theta_par / theta and theta_perp / theta at fixed total energy (mean of the three
@@ -73,17 +83,29 @@ void PostInitialization(Mesh *pm, ParameterInput *pin, MeshData<Real> *md) {
             target.u[d] = v(b, ccbulk::velocity(d), k, j, i);
             target.theta[d] = theta * (bimaxwellian ? perp_scale : 1.0);
           }
-          Maxwellian eq;
-          EquilibriumResult res;
+          Maxwellian eq[2];
+          bool failed = false;
           if (bimaxwellian) {
             target.theta[par_axis] = theta * par_scale;
-            res = SolveAnisotropicEquilibrium(grid, target, eq_params, eq);
+            const auto res = SolveAnisotropicEquilibrium(grid, target, eq_params, eq[0]);
+            failed = res.status == EquilibriumResult::Status::fallback;
+          } else if (two) {
+            const Real delta = drift * std::sqrt(theta);
+            target.n *= 0.5;
+            for (int d = 0; d < 3; ++d)
+              target.theta[d] = theta - delta * delta / 3.0;
+            for (int c = 0; c < 2; ++c) {
+              EquilibriumTarget half = target;
+              half.u[par_axis] += (c == 0) ? -delta : delta;
+              const auto res = SolveEquilibrium(grid, half, eq_params, eq[c]);
+              failed = failed || (res.status == EquilibriumResult::Status::fallback);
+            }
           } else {
-            res = SolveEquilibrium(grid, target, eq_params, eq);
+            const auto res = SolveEquilibrium(grid, target, eq_params, eq[0]);
+            failed = res.status == EquilibriumResult::Status::fallback;
           }
-          auto f = [&](const int n) -> Real & { return v(b, fields::f(n), k, j, i); };
-          FillEquilibrium(grid, eq, f);
-          const bool failed = res.status == EquilibriumResult::Status::fallback;
+          WithCell(kind, v, b, k, j, i,
+                   [&](const auto &cell) { cell.Fill(eq, two ? 2 : 1); });
           v(b, fields::eq_fallback(), k, j, i) = failed ? 1.0 : 0.0;
           nfail += failed ? 1.0 : 0.0;
         });
@@ -97,8 +119,7 @@ void PostInitialization(Mesh *pm, ParameterInput *pin, MeshData<Real> *md) {
 #endif
   const Real frac = (counts[1] > 0.0) ? counts[0] / counts[1] : 0.0;
   if (Globals::my_rank == 0) {
-    std::cout << "kinetics: initialized f ("
-              << (bimaxwellian ? "bimaxwellian" : "equilibrium")
+    std::cout << "kinetics: initialized f (" << init
               << "); equilibrium fallbacks: " << counts[0] << " of " << counts[1]
               << " cells (ghosts included)" << std::endl;
   }
@@ -116,8 +137,10 @@ ResolutionReport CheckResolution(Mesh *pm, MeshData<Real> *md, const std::string
   auto pkg = pm->packages.Get(pkg_name);
   const auto grid = pkg->Param<VelocityGrid>("grid");
 
-  static auto desc = MakePackDescriptor<fields::f>(pm->resolved_packages.get());
+  static auto desc =
+      MakePackDescriptor<fields::f, fields::f_tt>(pm->resolved_packages.get());
   auto v = desc.GetPack(md);
+  const auto kind = GetCellKind(pkg.get());
 
   ResolutionReport report{0.0, std::numeric_limits<Real>::max()};
   if (v.GetNBlocks() > 0) {
@@ -130,25 +153,24 @@ ResolutionReport CheckResolution(Mesh *pm, MeshData<Real> *md, const std::string
         "Kinetics::EdgeMass", space,
         KOKKOS_LAMBDA(const int b, const int k, const int j, const int i, Real &lmax) {
           Real total = 0.0, edge = 0.0;
-          for (int n = 0; n < grid.Size(); ++n) {
-            int ix, iy, iz;
-            grid.Unflatten(n, ix, iy, iz);
-            const int idx[3] = {ix, iy, iz};
-            bool on_edge = false;
-            for (int d = 0; d < 3; ++d)
-              on_edge =
-                  on_edge || (edge_axis[d] && (idx[d] == 0 || idx[d] == grid.nv[d] - 1));
-            const Real fv = std::abs(v(b, fields::f(n), k, j, i));
-            total += fv;
-            edge += on_edge ? fv : 0.0;
-          }
+          WithCell(kind, v, b, k, j, i, [&](const auto &cell) {
+            cell.ForEach([&](const int ix, const int iy, const int iz, const Real fv) {
+              const int idx[3] = {ix, iy, iz};
+              bool on_edge = false;
+              for (int d = 0; d < 3; ++d)
+                on_edge = on_edge ||
+                          (edge_axis[d] && (idx[d] == 0 || idx[d] == grid.nv[d] - 1));
+              total += std::abs(fv);
+              edge += on_edge ? std::abs(fv) : 0.0;
+            });
+          });
           lmax = std::max(lmax, total > 0.0 ? edge / total : 0.0);
         });
     report.min_vth_over_dv = rmin::four_d(
         "Kinetics::ThermalResolution", space,
         KOKKOS_LAMBDA(const int b, const int k, const int j, const int i, Real &lmin) {
-          const auto m = ComputeRawMoments(
-              grid, [&](const int n) { return v(b, fields::f(n), k, j, i); });
+          RawMoments m;
+          WithCell(kind, v, b, k, j, i, [&](const auto &cell) { m = cell.Raw(); });
           const auto t = IsotropicTarget(m);
           const Real vth = std::sqrt(std::max(t.theta[0], 0.0));
           for (int d = 0; d < 3; ++d)

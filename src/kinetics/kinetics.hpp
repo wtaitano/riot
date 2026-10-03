@@ -17,9 +17,12 @@
 // Kinetics package: a neutral monatomic gas described by its velocity distribution
 // function f(x, v, t) on a fixed uniform velocity grid, with a BGK collision operator.
 // The dense discrete-velocity solver here is the reference for later compressed (TT)
-// representations. Design: claude_sessions/kinetic_bgk/S0_DESIGN.md.
+// representations. Design: claude_sessions/kinetic_bgk/S0_DESIGN.md (dense) and
+// S1_DESIGN.md (tensor train, kinetics/representation = tt).
 
 #include <memory>
+#include <string>
+#include <vector>
 
 #include <parthenon/driver.hpp>
 #include <parthenon/package.hpp>
@@ -42,6 +45,8 @@ const std::string input_block = "kinetics";
 // velocity nodes, nv1 * nv2 * nv3.
 namespace fields {
 VARIABLE_VECTOR(kinetics, f, false, 1); // number density in phase space, flat over v
+// Tensor-train f (representation = tt): ranks and cores per cell, see tt_tensor.hpp.
+VARIABLE_VECTOR(kinetics, f_tt, false, 1);
 VARIABLE_SCALAR(kinetics, rho, false);
 VARIABLE_VECTOR(kinetics, velocity, false, 3);
 VARIABLE_SCALAR(kinetics, temperature, false);
@@ -49,6 +54,7 @@ VARIABLE_SCALAR(kinetics, pressure, false);
 VARIABLE_VECTOR(kinetics, stress, false, 6); // xx, yy, zz, xy, xz, yz
 VARIABLE_VECTOR(kinetics, heat_flux, false, 3);
 VARIABLE_SCALAR(kinetics, eq_fallback, false); // 0 if the equilibrium solve converged
+VARIABLE_VECTOR(kinetics, tt_rank, false, 2);  // representation = tt: (r1, r2)
 } // namespace fields
 
 // Particle physics constants of the single species, derived from the hydro material.
@@ -77,7 +83,14 @@ TaskStatus Stream(MeshData<Real> *src, MeshData<Real> *dst, const Real h);
 // Largest substep allowed by kinetics/cfl over the whole mesh (MPI-reduced).
 Real MaxStreamingStep(Mesh *pm);
 
-// Fill f from the hydro state (equilibrium, or bi-Maxwellian deviation).
+// Velocity-space representation of f.
+enum class Representation { dense, tt };
+inline Representation GetRepresentation(const StateDescriptor *pkg) {
+  return pkg->Param<std::string>("representation") == "tt" ? Representation::tt
+                                                           : Representation::dense;
+}
+
+// Fill f from the hydro state (equilibrium, bi-Maxwellian or two drifting Maxwellians).
 void PostInitialization(Mesh *pm, ParameterInput *pin, MeshData<Real> *md);
 
 // Resolution diagnostics of the current f: the largest fraction of a cell's mass on
@@ -99,6 +112,11 @@ std::vector<Real> HistorySums(MeshData<Real> *md);
 Real HistoryMinF(MeshData<Real> *md);
 Real HistoryFallbackCount(MeshData<Real> *md);
 Real HistorySubsteps(MeshData<Real> *md);
+// representation = tt: [cells, sum r1, sum r2, cells with a rank at tt_rank_max] (the
+// mean ranks follow by division), and the largest rank. Per-cell ranks for percentiles
+// are in the derived field kinetics.tt_rank.
+std::vector<Real> HistoryRankSums(MeshData<Real> *md);
+Real HistoryMaxRank(MeshData<Real> *md);
 
 } // namespace Kinetics
 

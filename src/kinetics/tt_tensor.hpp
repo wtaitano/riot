@@ -52,6 +52,9 @@ using namespace parthenon::package::prelude;
 namespace Kinetics {
 namespace TT {
 
+// Largest rank supported by kernels that keep one rank-sized vector on the stack.
+constexpr int kMaxRank = 64;
+
 struct PtrData {
   Real *p;
   KOKKOS_INLINE_FUNCTION Real &operator()(const int n) const { return p[n]; }
@@ -72,29 +75,44 @@ inline TTLayout MakeLayout(const VelocityGrid &grid, const int rcap) {
   return TTLayout{{grid.nv[0], grid.nv[1], grid.nv[2]}, rcap};
 }
 
+// Accessor of one cell of a Parthenon pack variable: data(n) = v(b, Var(n), k, j, i).
+// Holds a reference to the pack, so it must not outlive the kernel's captured copy.
+template <class Pack, class Var>
+struct PackCell {
+  const Pack &v;
+  int b, k, j, i;
+  KOKKOS_INLINE_FUNCTION Real &operator()(const int n) const {
+    return v(b, Var(n), k, j, i);
+  }
+};
+
+// View of one TT. The ranks are cached when the view is made (MakeRef) and kept in sync
+// by SetRanks; another view of the same data that changes the ranks makes this one stale.
 template <class Data>
 struct TTRef {
   Data data;
   TTLayout L;
+  mutable int r1 = 0, r2 = 0;
 
-  KOKKOS_INLINE_FUNCTION int R1() const { return static_cast<int>(data(0)); }
-  KOKKOS_INLINE_FUNCTION int R2() const { return static_cast<int>(data(1)); }
-  KOKKOS_INLINE_FUNCTION void SetRanks(const int r1, const int r2) const {
-    data(0) = r1;
-    data(1) = r2;
+  KOKKOS_INLINE_FUNCTION int R1() const { return r1; }
+  KOKKOS_INLINE_FUNCTION int R2() const { return r2; }
+  KOKKOS_INLINE_FUNCTION void SetRanks(const int new_r1, const int new_r2) const {
+    data(0) = new_r1;
+    data(1) = new_r2;
+    r1 = new_r1;
+    r2 = new_r2;
   }
   KOKKOS_INLINE_FUNCTION Real &G1(const int i, const int a) const {
     return data(L.Slot1() + i + L.n[0] * a);
   }
   KOKKOS_INLINE_FUNCTION Real &G2(const int a, const int j, const int b) const {
-    return data(L.Slot2() + a + R1() * (j + L.n[1] * b));
+    return data(L.Slot2() + a + r1 * (j + L.n[1] * b));
   }
   KOKKOS_INLINE_FUNCTION Real &G3(const int b, const int k) const {
-    return data(L.Slot3() + b + R2() * k);
+    return data(L.Slot3() + b + r2 * k);
   }
 
   KOKKOS_INLINE_FUNCTION Real operator()(const int i, const int j, const int k) const {
-    const int r1 = R1(), r2 = R2();
     Real sum = 0.0;
     for (int b = 0; b < r2; ++b) {
       Real left = 0.0;
@@ -106,9 +124,16 @@ struct TTRef {
   }
 };
 
+// View of an existing TT (reads the stored ranks).
 template <class Data>
 KOKKOS_INLINE_FUNCTION TTRef<Data> MakeRef(const Data &data, const TTLayout &L) {
-  return TTRef<Data>{data, L};
+  return TTRef<Data>{data, L, static_cast<int>(data(0)), static_cast<int>(data(1))};
+}
+
+// View of storage about to be written (ranks 0 until SetRanks; nothing is read).
+template <class Data>
+KOKKOS_INLINE_FUNCTION TTRef<Data> MakeOutRef(const Data &data, const TTLayout &L) {
+  return TTRef<Data>{data, L, 0, 0};
 }
 
 // Copy src into dst; dst.L.rcap must be >= the ranks of src.
@@ -130,18 +155,58 @@ KOKKOS_INLINE_FUNCTION void CopyTT(const TTRef<D1> &src, const TTRef<D2> &dst) {
       dst.G3(b, k) = src.G3(b, k);
 }
 
-// Rank-1 tensor of the separable equilibrium M(ix, iy, iz) = scale exp(b0 + sum_d A_d).
+// Sum of count separable equilibria, sum_c scale_c exp(b0_c + sum_d A_{c,d}), as an
+// exact TT of ranks (count, count): G1 = [m_1x ... m_cx], G2 = diag(m_cy), G3 = [m_cz].
+// count = 1 is the rank-1 discrete equilibrium.
+template <class Data>
+KOKKOS_INLINE_FUNCTION void FillMaxwellians(const VelocityGrid &grid,
+                                            const Maxwellian *eqs, const int count,
+                                            const TTRef<Data> &t) {
+  PARTHENON_DEBUG_REQUIRE(count <= t.L.rcap,
+                          "kinetics TT: FillMaxwellians count exceeds rank capacity");
+  t.SetRanks(count, count);
+  for (int c = 0; c < count; ++c) {
+    const Maxwellian &eq = eqs[c];
+    const Real c0 = eq.scale * std::exp(eq.b0);
+    for (int i = 0; i < grid.nv[0]; ++i)
+      t.G1(i, c) = c0 * std::exp(eq.AxisExponent(0, grid.Node(0, i)));
+    for (int b = 0; b < count; ++b)
+      for (int j = 0; j < grid.nv[1]; ++j)
+        t.G2(c, j, b) = (b == c) ? std::exp(eq.AxisExponent(1, grid.Node(1, j))) : 0.0;
+    for (int k = 0; k < grid.nv[2]; ++k)
+      t.G3(c, k) = std::exp(eq.AxisExponent(2, grid.Node(2, k)));
+  }
+}
+
 template <class Data>
 KOKKOS_INLINE_FUNCTION void FillMaxwellian(const VelocityGrid &grid, const Maxwellian &eq,
                                            const TTRef<Data> &t) {
-  t.SetRanks(1, 1);
-  const Real c0 = eq.scale * std::exp(eq.b0);
-  for (int i = 0; i < grid.nv[0]; ++i)
-    t.G1(i, 0) = c0 * std::exp(eq.AxisExponent(0, grid.Node(0, i)));
-  for (int j = 0; j < grid.nv[1]; ++j)
-    t.G2(0, j, 0) = std::exp(eq.AxisExponent(1, grid.Node(1, j)));
-  for (int k = 0; k < grid.nv[2]; ++k)
-    t.G3(0, k) = std::exp(eq.AxisExponent(2, grid.Node(2, k)));
+  FillMaxwellians(grid, &eq, 1, t);
+}
+
+// Call func(i, j, k, value) for every node, in (j, i, k) loop order. O(n^2 r1 r2 + n^3
+// r2).
+template <class Data, class Func>
+KOKKOS_INLINE_FUNCTION void ForEachNode(const TTRef<Data> &t, const Func &func) {
+  Real left[kMaxRank];
+  const int r1 = t.R1(), r2 = t.R2();
+  PARTHENON_DEBUG_REQUIRE(r1 <= kMaxRank && r2 <= kMaxRank,
+                          "kinetics TT: ForEachNode rank above kMaxRank");
+  for (int j = 0; j < t.L.n[1]; ++j)
+    for (int i = 0; i < t.L.n[0]; ++i) {
+      for (int b = 0; b < r2; ++b) {
+        Real l = 0.0;
+        for (int a = 0; a < r1; ++a)
+          l += t.G1(i, a) * t.G2(a, j, b);
+        left[b] = l;
+      }
+      for (int k = 0; k < t.L.n[2]; ++k) {
+        Real v = 0.0;
+        for (int b = 0; b < r2; ++b)
+          v += left[b] * t.G3(b, k);
+        func(i, j, k, v);
+      }
+    }
 }
 
 // Frobenius norm by full contraction, O(n^3 r^2). For tests and diagnostics only.
@@ -294,16 +359,15 @@ KOKKOS_INLINE_FUNCTION int ChooseRank(const Real *s, const int q, const Real del
 
 } // namespace impl
 
-// Round the TT held in the scratch input slot (capacity sc.rin, ranks set by the caller)
-// into dst (capacity dst.L.rcap). work points to sc.Size() reals; the input lives at its
-// start (see InputRef).
+// The scratch input slot (capacity sc.rin) at the start of work, as an output view:
+// fill it with CopyTT or AddInto, then call Round.
 KOKKOS_INLINE_FUNCTION TTRef<PtrData> InputRef(const RoundScratch &sc, Real *work) {
-  return TTRef<PtrData>{PtrData{work}, TTLayout{{sc.n[0], sc.n[1], sc.n[2]}, sc.rin}};
+  return MakeOutRef(PtrData{work}, TTLayout{{sc.n[0], sc.n[1], sc.n[2]}, sc.rin});
 }
 
 // Write alpha A + beta B into the scratch input slot as a block TT of ranks
-// (rA1 + rB1, rA2 + rB2): G1 = [alpha A1, beta B1], G2 = blockdiag(A2, B2), G3 = [A3; B3].
-// The summed ranks must not exceed sc.rin.
+// (rA1 + rB1, rA2 + rB2): G1 = [alpha A1, beta B1], G2 = blockdiag(A2, B2), G3 = [A3;
+// B3]. The summed ranks must not exceed sc.rin.
 template <class DA, class DB>
 KOKKOS_INLINE_FUNCTION void AddInto(const RoundScratch &sc, Real *work, const Real alpha,
                                     const TTRef<DA> &A, const Real beta,
@@ -339,7 +403,8 @@ KOKKOS_INLINE_FUNCTION void AddInto(const RoundScratch &sc, Real *work, const Re
 template <class Data>
 KOKKOS_INLINE_FUNCTION RoundInfo Round(const RoundScratch &sc, Real *work,
                                        const TTRef<Data> &dst, const RoundParams &prm) {
-  const TTRef<PtrData> in = InputRef(sc, work);
+  const TTRef<PtrData> in =
+      MakeRef(PtrData{work}, TTLayout{{sc.n[0], sc.n[1], sc.n[2]}, sc.rin});
   const int n0 = sc.n[0], n1 = sc.n[1], n2 = sc.n[2];
   int R1 = in.R1(), R2 = in.R2();
   PARTHENON_DEBUG_REQUIRE(R1 <= sc.rin && R2 <= sc.rin,
@@ -422,8 +487,8 @@ KOKKOS_INLINE_FUNCTION RoundInfo Round(const RoundScratch &sc, Real *work,
 
   // --- Left-to-right truncation ---
   // G1 (n0 x R1) = U S V^T:  G1 <- U_r1,  G2 <- (S V^T)_r1 G2.
-  const int q1 = impl::ThinSVD(ColMajor(g1, n0, R1), b3, sv, s3, b1, b2, s1, s2, tau,
-                               info.svd_ok);
+  const int q1 =
+      impl::ThinSVD(ColMajor(g1, n0, R1), b3, sv, s3, b1, b2, s1, s2, tau, info.svd_ok);
   const int r1 = impl::ChooseRank(sv, q1, delta, rmax, info.cap_hit, tail2);
   {
     const Mat U = ColMajor(b3, n0, q1);
@@ -443,9 +508,8 @@ KOKKOS_INLINE_FUNCTION RoundInfo Round(const RoundScratch &sc, Real *work,
     Copy(T, ColMajor(g2, r1, n1 * R2));
   }
   // G2 left unfolding (r1 n1 x R2) = U S V^T:  G2 <- U_r2,  G3 <- (S V^T)_r2 G3.
-  const int q2 =
-      impl::ThinSVD(ColMajor(g2, r1 * n1, R2), b3, sv, s3, b1, b2, s1, s2, tau,
-                    info.svd_ok);
+  const int q2 = impl::ThinSVD(ColMajor(g2, r1 * n1, R2), b3, sv, s3, b1, b2, s1, s2, tau,
+                               info.svd_ok);
   const int r2 = impl::ChooseRank(sv, q2, delta, rmax, info.cap_hit, tail2);
   {
     const Mat U = ColMajor(b3, r1 * n1, q2);
