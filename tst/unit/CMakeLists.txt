@@ -25,6 +25,7 @@ add_executable(
   test_kinetics_bgk.cpp
   test_kinetics_equilibrium.cpp
   test_kinetics_sl.cpp
+  test_kinetics_tt.cpp
 )
 
 target_link_libraries(riot_unit_tests PRIVATE

@@ -46,6 +46,8 @@ set (SRC_LIST
   kinetics/moments.hpp
   kinetics/semi_lagrangian.cpp
   kinetics/semi_lagrangian.hpp
+  kinetics/tt_linalg.hpp
+  kinetics/tt_tensor.hpp
   kinetics/velocity_grid.hpp
 
   laser/laser.cpp
