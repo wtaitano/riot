@@ -348,6 +348,26 @@ The history adds ``kinetics_tt_cross_0..3`` (summed over cells at the output:
 evaluations of :math:`\varphi`, :math:`\max(q_1, q_2)`, rank-cap hits, cells whose
 cross did not converge).
 
+**Scaling with the velocity grid.** Measured on one core for 0D relaxation and 1D Sod
+(128 cells, :math:`\nu_0 = 10^4` and :math:`10`, 37 steps) at
+:math:`N_v = 16^3, 32^3, 64^3` (``tt_rank_max`` 8 at :math:`16^3`, 16 otherwise):
+
+* The TT ranks do not grow with :math:`N_v` (Sod: at most 9 at ``tt_eps = 1e-14``, 5 at
+  ``1e-8``), so TT storage and cost grow about linearly in :math:`N_v` per direction,
+  while dense grows as :math:`N_v^3`.
+* At ``tt_eps = 1e-14`` the TT moments match dense to :math:`3\times 10^{-11}` at every
+  :math:`N_v`. At the default ``1e-8`` they differ by :math:`4\times 10^{-7}` to
+  :math:`10^{-6}`, set by the accumulated rounding error, independent of :math:`N_v`.
+* At :math:`64^3` the allocated storage is 14 times smaller than dense and the achieved
+  storage 76 to 200 times smaller (peak memory 2.7 GB dense vs 0.28 GB TT). The run is
+  15 to 16 times faster at ``tt_eps = 1e-14`` and 50 to 57 times faster at ``1e-8``.
+* At :math:`16^3` TT saves little: the allocation is only 3 times smaller, and at
+  ``tt_eps = 1e-14`` TT is slower than dense.
+* The cross diagnostics evaluate :math:`\varphi` at 2 to 5 % of the nodes at
+  :math:`64^3` (30 to 60 % at :math:`16^3`).
+
+Raw data: ``s1/step9/RESULTS.md`` of the kinetic project.
+
 Output
 ------
 
