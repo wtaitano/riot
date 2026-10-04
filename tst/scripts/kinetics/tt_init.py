@@ -68,6 +68,7 @@ def run(**kwargs):
                 [
                     "parthenon/job/problem_id=" + pid(rep, init),
                     "kinetics/representation=" + rep,
+                    "kinetics/tt_diag=exact",
                     "kinetics/init=" + init,
                     f"kinetics/tt_rank_max={rcap}",
                     "parthenon/time/nlim=0",

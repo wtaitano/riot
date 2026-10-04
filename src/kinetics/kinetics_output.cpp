@@ -21,6 +21,7 @@
 #include "kinetics/kinetics.hpp"
 #include "kinetics/kinetics_cell.hpp"
 #include "kinetics/moments.hpp"
+#include "kinetics/tt_cross.hpp"
 #include "kinetics/velocity_grid.hpp"
 #include "riot_utils/riot_loops.hpp"
 #include "riot_utils/riot_utils.hpp"
@@ -73,11 +74,63 @@ void SetDerivedMomentsMesh(Mesh *pm, ParameterInput *pin, parthenon::SimTime &tm
       });
 }
 
+namespace {
+
+// tt_diag = cross: entropy integrand of every interior cell by TTCross (tt_cross.hpp),
+// one cell per team with level-1 scratch, into kinetics.tt_cross: [sum g, phi
+// evaluations, max(q1, q2), cap hit, not converged].
+void CrossEntropyTT(MeshData<Real> *md) {
+  auto pm = md->GetParentPointer();
+  static auto desc =
+      MakePackDescriptor<fields::f_tt, fields::tt_cross>(pm->resolved_packages.get());
+  auto v = desc.GetPack(md);
+  if (v.GetNBlocks() == 0) return;
+  auto pkg = pm->packages.Get(pkg_name);
+  const auto grid = pkg->Param<VelocityGrid>("grid");
+  const auto L = pkg->Param<TT::TTLayout>("tt_layout");
+  const auto prm = pkg->Param<TT::CrossParams>("tt_cross");
+  const TT::EntropyPhi phi{pkg->Param<Real>("tt_cross_delta")};
+  const auto sc = TT::MakeCrossScratch(grid, L.rcap, prm);
+  const int nreal = sc.RealSize(), nint = sc.IntSize();
+  const std::size_t scratch_bytes = parthenon::ScratchPad1D<Real>::shmem_size(nreal) +
+                                    parthenon::ScratchPad1D<int>::shmem_size(nint);
+  TT::RequireTeamScratch(scratch_bytes, "cross diagnostics");
+  constexpr int scratch_level = 1;
+  const auto ib = md->GetBoundsI(IndexDomain::interior);
+  const auto jb = md->GetBoundsJ(IndexDomain::interior);
+  const auto kb = md->GetBoundsK(IndexDomain::interior);
+  parthenon::par_for_outer(
+      DEFAULT_OUTER_LOOP_PATTERN, "Kinetics::CrossEntropyTT", DevExecSpace(),
+      scratch_bytes, scratch_level, 0, v.GetNBlocks() - 1, kb.s, kb.e, jb.s, jb.e, ib.s,
+      ib.e,
+      KOKKOS_LAMBDA(parthenon::team_mbr_t member, const int b, const int k, const int j,
+                    const int i) {
+        parthenon::ScratchPad1D<Real> work(member.team_scratch(scratch_level), nreal);
+        parthenon::ScratchPad1D<int> iwork(member.team_scratch(scratch_level), nint);
+        Kokkos::single(Kokkos::PerTeam(member), [&]() {
+          const auto f =
+              TT::MakeRef(TT::PackCell<decltype(v), fields::f_tt>{v, b, k, j, i}, L);
+          const auto info = TT::TTCross(sc, work.data(), iwork.data(), f, phi, prm);
+          const auto g = TT::CrossOutput(sc, work.data());
+          const auto one = [](const int) { return 1.0; };
+          v(b, fields::tt_cross(0), k, j, i) = TT::Contract(g, one, one, one);
+          v(b, fields::tt_cross(1), k, j, i) = info.evals;
+          v(b, fields::tt_cross(2), k, j, i) = (info.q1 > info.q2) ? info.q1 : info.q2;
+          v(b, fields::tt_cross(3), k, j, i) = info.cap_hit ? 1.0 : 0.0;
+          v(b, fields::tt_cross(4), k, j, i) = info.converged ? 0.0 : 1.0;
+        });
+      });
+}
+
+} // namespace
+
 //----------------------------------------------------------------------------------------
 //! \fn  std::vector<Real> Kinetics::HistorySums
 //! \brief Volume-integrated invariants. Columns (suffix _n of "kinetics_sums"):
 //!   0 kinetic mass, 1-3 kinetic momentum, 4 kinetic energy,
 //!   5 entropy H = sum f (ln f - 1) w dV over f > 0, 6 negative mass (m sum f w dV, f<0),
+//!   (tt_diag = cross: 5 is the cross estimate of the regularized entropy, tt_cross.hpp;
+//!   6 is always exact),
 //!   7 hydro mass, 8-10 hydro momentum, 11 hydro total energy.
 std::vector<Real> HistorySums(MeshData<Real> *md) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
@@ -85,13 +138,16 @@ std::vector<Real> HistorySums(MeshData<Real> *md) {
   constexpr int NSUM = 12;
   auto pm = md->GetParentPointer();
   static auto desc =
-      MakePackDescriptor<fields::f, fields::f_tt, ccmat::rho, ccbulk::momentum,
-                         ccbulk::total_material_energy>(pm->resolved_packages.get());
+      MakePackDescriptor<fields::f, fields::f_tt, fields::tt_cross, ccmat::rho,
+                         ccbulk::momentum, ccbulk::total_material_energy>(
+          pm->resolved_packages.get());
   auto v = desc.GetPack(md);
   std::vector<Real> sums(NSUM, 0.0);
   if (v.GetNBlocks() == 0) return sums;
 
   auto pkg = pm->packages.Get(pkg_name);
+  const bool cross = IsCrossDiag(pkg.get());
+  if (cross) CrossEntropyTT(md);
   const auto grid = pkg->Param<VelocityGrid>("grid");
   const Real m = pkg->Param<Species>("species").mass;
   const Real w = grid.Weight();
@@ -106,7 +162,8 @@ std::vector<Real> HistorySums(MeshData<Real> *md) {
                     RiotUtils::array_type<Real, NSUM> &acc) {
         const Real dV = v.GetCoordinates(b).CellVolume(k, j, i);
         // Dense: one pass over the nodes. TT: invariants by exact core contractions,
-        // entropy and negative mass node by node (decompression, tt_diag = exact).
+        // negative mass node by node (decompression), entropy node by node
+        // (tt_diag = exact) or from the cross pass above (cross).
         Real s[7] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
         if (!kind.tt) {
           for (int iz = 0; iz < grid.nv[2]; ++iz) {
@@ -133,10 +190,17 @@ std::vector<Real> HistorySums(MeshData<Real> *md) {
           for (int d = 0; d < 3; ++d)
             s[1 + d] = raw.nu[d] / w;
           s[4] = 0.5 * (raw.nvv[0] + raw.nvv[1] + raw.nvv[2]) / w;
-          cell.ForEach([&](const int, const int, const int, const Real fv) {
-            s[5] += (fv > 0.0) ? fv * (std::log(fv) - 1.0) : 0.0;
-            s[6] += (fv < 0.0) ? fv : 0.0;
-          });
+          if (cross) {
+            s[5] = v(b, fields::tt_cross(0), k, j, i);
+            cell.ForEach([&](const int, const int, const int, const Real fv) {
+              s[6] += (fv < 0.0) ? fv : 0.0;
+            });
+          } else {
+            cell.ForEach([&](const int, const int, const int, const Real fv) {
+              s[5] += (fv > 0.0) ? fv * (std::log(fv) - 1.0) : 0.0;
+              s[6] += (fv < 0.0) ? fv : 0.0;
+            });
+          }
         }
         for (int a = 0; a < 5; ++a)
           acc.my_array[a] += m * s[a] * w * dV;
@@ -158,7 +222,8 @@ std::vector<Real> HistorySums(MeshData<Real> *md) {
 
 //----------------------------------------------------------------------------------------
 //! \fn  Real Kinetics::HistoryMinF
-//! \brief Smallest value of f over all interior cells and velocity nodes.
+//! \brief Smallest value of f over all interior cells and velocity nodes (tt_diag =
+//! cross: a sampled upper bound, tt_cross.hpp).
 Real HistoryMinF(MeshData<Real> *md) {
   auto pm = md->GetParentPointer();
   static auto desc =
@@ -181,6 +246,18 @@ Real HistoryMinF(MeshData<Real> *md) {
   }
   using rt = RiotFlatReduce::ReductionType<Kokkos::Min<Real>>;
   auto space = rt::GetIndexSpace(IndexDomain::interior, v.GetNBlocks(), md);
+  if (IsCrossDiag(pkg.get())) {
+    // Sampled bound (upper bound on the true min), tt_cross.hpp.
+    const int trial = pkg->Param<TT::CrossParams>("tt_cross").trial_factor;
+    const auto L = kind.L;
+    return rt::four_d(
+        "Kinetics::HistoryMinFCross", space,
+        KOKKOS_LAMBDA(const int b, const int k, const int j, const int i, Real &lmin) {
+          const auto f =
+              TT::MakeRef(TT::PackCell<decltype(v), fields::f_tt>{v, b, k, j, i}, L);
+          lmin = std::min(lmin, TT::SampledMinF(f, trial));
+        });
+  }
   return rt::four_d(
       "Kinetics::HistoryMinF", space,
       KOKKOS_LAMBDA(const int b, const int k, const int j, const int i, Real &lmin) {
@@ -263,6 +340,34 @@ std::vector<Real> HistoryRoundSums(MeshData<Real> *md) {
                     RiotUtils::array_type<Real, NSUM> &acc) {
         for (int a = 0; a < NSUM; ++a)
           acc.my_array[a] += v(b, fields::tt_round(a), k, j, i);
+      });
+  Kokkos::fence();
+  for (int a = 0; a < NSUM; ++a)
+    sums[a] = result.my_array[a];
+  return sums;
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  std::vector<Real> Kinetics::HistoryCrossSums
+//! \brief tt_diag = cross, over the interior cells at this output: phi evaluations,
+//! sum of max(q1, q2), rank-cap hits, cells not converged. Filled by the cross pass of
+//! HistorySums, which is enrolled (and so evaluated) first.
+std::vector<Real> HistoryCrossSums(MeshData<Real> *md) {
+  constexpr int NSUM = 4;
+  auto pm = md->GetParentPointer();
+  static auto desc = MakePackDescriptor<fields::tt_cross>(pm->resolved_packages.get());
+  auto v = desc.GetPack(md);
+  std::vector<Real> sums(NSUM, 0.0);
+  if (v.GetNBlocks() == 0) return sums;
+  using rt =
+      RiotFlatReduce::ReductionType<RiotUtils::GlobalSum<Real, Kokkos::HostSpace, NSUM>>;
+  auto space = rt::GetIndexSpace(IndexDomain::interior, v.GetNBlocks(), md);
+  const auto result = rt::four_d(
+      "Kinetics::HistoryCrossSums", space,
+      KOKKOS_LAMBDA(const int b, const int k, const int j, const int i,
+                    RiotUtils::array_type<Real, NSUM> &acc) {
+        for (int a = 0; a < NSUM; ++a)
+          acc.my_array[a] += v(b, fields::tt_cross(1 + a), k, j, i);
       });
   Kokkos::fence();
   for (int a = 0; a < NSUM; ++a)

@@ -133,6 +133,7 @@ def run(**kwargs):
                 [
                     "parthenon/job/problem_id=" + pid(case, rep),
                     "kinetics/representation=" + rep,
+                    "kinetics/tt_diag=exact",
                     f"kinetics/tt_eps={eps}",
                 ]
                 + args,

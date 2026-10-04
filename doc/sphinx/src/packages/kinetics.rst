@@ -229,8 +229,10 @@ tensor train over :math:`(v_x, v_y, v_z)`,
 in the variable ``kinetics.f_tt`` (the ranks :math:`r_1, r_2` followed by the cores,
 sized for ``tt_rank_max``, i.e. :math:`2 + N_x r + N_y r^2 + N_z r` reals per cell
 instead of :math:`N_x N_y N_z`). The discrete equilibrium is exactly rank 1. Moments
-are exact contractions of the cores; entropy, negative mass and min :math:`f` are
-computed by decompressing each cell at history cadence (``tt_diag = exact``). The
+are exact contractions of the cores. The nonlinear diagnostics (entropy, min
+:math:`f`) are estimated by cross approximation by default (``tt_diag = cross``, see
+below) or computed by decompressing each cell at history cadence (``tt_diag =
+exact``); negative mass is always computed by decompression. The
 derived output fields are the same as for ``dense``, plus ``kinetics.tt_rank``
 :math:`(r_1, r_2)`. Design and status: ``S1_DESIGN.md`` of the kinetic project.
 
@@ -282,9 +284,28 @@ derived output fields are the same as for ``dense``, plus ``kinetics.tt_rank``
      - Largest TT rank (2 to 64); sets the storage per cell.
    * - tt_diag
      - string
-     - ``exact``
-     - Nonlinear diagnostics: ``exact`` (decompress). ``cross`` (DEIM cross
-       approximation) is planned.
+     - ``cross``
+     - Nonlinear diagnostics: ``cross`` (DEIM cross approximation, estimates) or
+       ``exact`` (decompress every cell).
+   * - tt_cross_eps
+     - Real
+     - ``1e-10``
+     - Cross: stop when the max residual on the trial set is below this times the
+       max of :math:`|g|` there.
+   * - tt_cross_rank_max
+     - int
+     - ``32``
+     - Cross: cap on the ranks of the approximated function (1 to 64).
+   * - tt_cross_trial_factor
+     - int
+     - ``16``
+     - Cross: trial nodes per cell = factor :math:`\times` max TT rank :math:`\times`
+       max :math:`N_v`.
+   * - tt_cross_delta
+     - Real
+     - ``1e-12``
+     - Cross entropy: regularization :math:`\delta` relative to the sampled max
+       :math:`|f|`.
 
 Restarts carry ``kinetics.f_tt`` (bitwise round trip), and runs on any number of MPI
 ranks give bitwise identical fields. A restart must keep ``representation``,
@@ -299,6 +320,33 @@ The history file adds ``kinetics_tt_ranks_0..3`` (cell count, sum of :math:`r_1`
 :math:`r_2`, cells at ``tt_rank_max``), ``kinetics_tt_round_0..2`` (over the last hydro
 step and all cells: sum of the relative discarded norms of the roundings, rank-cap hits,
 non-converged SVDs) and ``kinetics_tt_max_rank``.
+
+**Cross diagnostics** (``tt_diag = cross``, ``src/kinetics/tt_cross.hpp``). A pointwise
+function :math:`g = \varphi(f)` is approximated as a tensor train from a few node values
+of :math:`f`, by two DEIM projections: the :math:`v_x` fibers at a set :math:`J_2` of
+:math:`(v_y, v_z)` pairs give the first core and interpolation rows :math:`I_1`; the
+:math:`(I_1, v_y)` fibers at a set :math:`J_3` of :math:`v_z` nodes give the second core
+and rows :math:`I_2`; the :math:`v_z` fibers at :math:`I_2` are the third core. The
+initial :math:`J_2, J_3` are the DEIM points of :math:`f`'s own right bases; the
+residual is then measured on a fixed pseudo-random trial set and the worst node's
+fibers are added until the residual meets ``tt_cross_eps`` or a set reaches
+``tt_cross_rank_max``. Sums of :math:`g` are exact contractions of its cores.
+
+* Entropy is the cross estimate of :math:`\sum s(\ln(s + \delta) - 1)` with
+  :math:`s` a :math:`C^1` positive part of :math:`f` of width :math:`\delta` =
+  ``tt_cross_delta`` :math:`\times \max|f|` (exact entropy uses :math:`f > 0` only);
+  the regularization keeps :math:`g` smooth where rounding noise makes :math:`f`
+  change sign.
+* Min :math:`f` is a sampled bound: the minimum over the trial set, refined by
+  coordinate descent along full fibers from its four smallest nodes. It is an upper
+  bound on the true minimum and finds smooth negative lobes, not isolated single-node
+  spikes.
+* Negative mass is computed by decompression in both modes: its integrand is rounding
+  noise at the level of ``tt_eps``, which no low-rank cross resolves cheaply.
+
+The history adds ``kinetics_tt_cross_0..3`` (summed over cells at the output:
+evaluations of :math:`\varphi`, :math:`\max(q_1, q_2)`, rank-cap hits, cells whose
+cross did not converge).
 
 Output
 ------

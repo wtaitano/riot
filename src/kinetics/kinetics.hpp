@@ -58,6 +58,9 @@ VARIABLE_VECTOR(kinetics, tt_rank, false, 2);  // representation = tt: (r1, r2)
 // representation = tt, per cell over the last hydro step: sum of relative discarded
 // norms of the roundings, rank-cap hits, non-converged SVDs.
 VARIABLE_VECTOR(kinetics, tt_round, false, 3);
+// representation = tt, tt_diag = cross, per cell at the last history output: cross
+// entropy integrand sum, phi evaluations, max(q1, q2), rank-cap hit, not converged.
+VARIABLE_VECTOR(kinetics, tt_cross, false, 5);
 } // namespace fields
 
 // Particle physics constants of the single species, derived from the hydro material.
@@ -127,6 +130,9 @@ std::vector<Real> HistoryRankSums(MeshData<Real> *md);
 Real HistoryMaxRank(MeshData<Real> *md);
 // representation = tt: kinetics.tt_round summed over the interior cells.
 std::vector<Real> HistoryRoundSums(MeshData<Real> *md);
+// tt_diag = cross: kinetics.tt_cross columns 1-4 summed over the interior cells (filled
+// by HistorySums, which is enrolled before it).
+std::vector<Real> HistoryCrossSums(MeshData<Real> *md);
 
 } // namespace Kinetics
 

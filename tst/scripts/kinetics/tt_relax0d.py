@@ -62,6 +62,7 @@ def run_one(problem_id, rep, init, integ, streaming, extra=()):
         [
             "parthenon/job/problem_id=" + problem_id,
             "kinetics/representation=" + rep,
+            "kinetics/tt_diag=exact",
             "kinetics/init=" + init,
             "kinetics/integrator=" + integ,
             "kinetics/streaming=" + ("true" if streaming else "false"),

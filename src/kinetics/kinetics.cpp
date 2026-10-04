@@ -23,6 +23,7 @@
 #include "kinetics/kinetics.hpp"
 #include "kinetics/kinetics_bcs.hpp"
 #include "kinetics/semi_lagrangian.hpp"
+#include "kinetics/tt_cross.hpp"
 #include "kinetics/tt_tensor.hpp"
 #include "materials/materials.hpp"
 
@@ -113,11 +114,31 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
                           std::to_string(TT::kMaxRank) + "]");
     params.Add("tt_layout", TT::MakeLayout(grid, rcap));
     const std::string diag =
-        pin->GetOrAddString(input_block, "tt_diag", "exact", {"exact", "cross"},
+        pin->GetOrAddString(input_block, "tt_diag", "cross", {"exact", "cross"},
                             "Nonlinear diagnostics of a TT f: exact (decompress) or "
-                            "cross (DEIM cross approximation)");
-    PARTHENON_REQUIRE(diag == "exact",
-                      "kinetics: tt_diag = cross is not implemented yet (S1 step 8)");
+                            "cross (DEIM cross approximation, estimates)");
+    TT::CrossParams cross;
+    cross.eps = pin->GetOrAddReal(input_block, "tt_cross_eps", cross.eps,
+                                  "Cross: relative max residual on the trial set");
+    cross.rank_max = pin->GetOrAddInteger(input_block, "tt_cross_rank_max",
+                                          cross.rank_max, "Cross: cap on the ranks of g");
+    cross.trial_factor =
+        pin->GetOrAddInteger(input_block, "tt_cross_trial_factor", cross.trial_factor,
+                             "Cross: trial nodes = factor * max TT rank * max nv");
+    const Real cross_delta = pin->GetOrAddReal(
+        input_block, "tt_cross_delta", 1.0e-12,
+        "Cross entropy: regularization delta relative to max |f| (sampled)");
+    PARTHENON_REQUIRE(cross.eps > 0.0 && cross.eps < 1.0,
+                      "kinetics: tt_cross_eps must be in (0, 1)");
+    PARTHENON_REQUIRE(cross.rank_max >= 1 && cross.rank_max <= TT::kMaxRank,
+                      "kinetics: tt_cross_rank_max must be in [1, " +
+                          std::to_string(TT::kMaxRank) + "]");
+    PARTHENON_REQUIRE(cross.trial_factor >= 1 && cross.trial_factor <= 64,
+                      "kinetics: tt_cross_trial_factor must be in [1, 64]");
+    PARTHENON_REQUIRE(cross_delta > 0.0 && cross_delta < 1.0,
+                      "kinetics: tt_cross_delta must be in (0, 1)");
+    params.Add("tt_cross", cross);
+    params.Add("tt_cross_delta", cross_delta);
     params.Add("tt_diag", diag);
     PARTHENON_REQUIRE(pin->GetOrAddString("parthenon/mesh", "refinement", "none") ==
                           "none",
@@ -269,6 +290,12 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
                   MetadataOperatorSplit},
                  std::vector<int>({3}));
     pkg->AddField<fields::tt_round>(m3r);
+    if (params.Get<std::string>("tt_diag") == "cross") {
+      Metadata m5({Metadata::Cell, Metadata::Derived, Metadata::OneCopy, MetadataKinetics,
+                   MetadataOperatorSplit},
+                  std::vector<int>({5}));
+      pkg->AddField<fields::tt_cross>(m5);
+    }
   }
 
   // Boundary conditions (needs grid, eq_params and species)
@@ -289,6 +316,9 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
         UserHistoryOperation::sum, HistoryRankSums, "kinetics_tt_ranks"));
     hst_vecs.emplace_back(parthenon::HistoryOutputVec(
         UserHistoryOperation::sum, HistoryRoundSums, "kinetics_tt_round"));
+    if (params.Get<std::string>("tt_diag") == "cross")
+      hst_vecs.emplace_back(parthenon::HistoryOutputVec(
+          UserHistoryOperation::sum, HistoryCrossSums, "kinetics_tt_cross"));
   }
   pkg->AddParam<>(parthenon::hist_vec_param_key, hst_vecs);
   parthenon::HstVar_list hst_vars = {};

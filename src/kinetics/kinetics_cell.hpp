@@ -25,6 +25,8 @@
 // A pack holding both kinetics.f and kinetics.f_tt can be used: only the field of the
 // active representation is registered, and only the matching cell type touches it.
 
+#include <string>
+
 #include <parthenon/package.hpp>
 
 #include "kinetics/equilibrium.hpp"
@@ -107,6 +109,12 @@ inline CellKind GetCellKind(const StateDescriptor *pkg) {
              pkg->Param<VelocityGrid>("grid"), TT::TTLayout{{0, 0, 0}, 0}};
   if (c.tt) c.L = pkg->Param<TT::TTLayout>("tt_layout");
   return c;
+}
+
+// representation = tt with tt_diag = cross: nonlinear diagnostics by cross approximation.
+inline bool IsCrossDiag(const StateDescriptor *pkg) {
+  return GetRepresentation(pkg) == Representation::tt &&
+         pkg->Param<std::string>("tt_diag") == "cross";
 }
 
 // Call body(cell) with the cell of the active representation. body is a generic lambda;

@@ -35,6 +35,11 @@
 //   * T4: TT streaming of one cell along each velocity axis (tt_stream.hpp) equals the
 //     dense SL update node by node, for linear and quadratic weights; ReverseAxis
 //     mirrors one velocity axis exactly; Contract equals the dense weighted sum.
+//   * T5: cross approximation (tt_cross.hpp). phi = identity reproduces a generic TT
+//     node by node with ranks <= those of f; the regularized entropy of two drifting
+//     equilibria (plus a small negative perturbation) matches phi(f) node by node and
+//     sums to the exact entropy; a rank cap below the needed rank is reported;
+//     SampledMinF finds a planted smooth negative lobe.
 //
 // Kernels run on device in a single-iteration loop, as in test_kinetics_equilibrium.
 
@@ -52,6 +57,7 @@ using namespace parthenon::package::prelude;
 #include "kinetics/equilibrium.hpp"
 #include "kinetics/moments.hpp"
 #include "kinetics/semi_lagrangian.hpp"
+#include "kinetics/tt_cross.hpp"
 #include "kinetics/tt_linalg.hpp"
 #include "kinetics/tt_moments.hpp"
 #include "kinetics/tt_relax.hpp"
@@ -599,6 +605,119 @@ TEST_CASE("T4: TT streaming equals dense SL of the decompressed cells",
       CHECK(h[1] == 0.0);
       CHECK(h[2] < 1.0e-13);
       CHECK(h[3] == 0.0);
+    }
+  }
+}
+
+TEST_CASE("T5: cross approximation of pointwise functions of a TT",
+          "[kinetics][tt][T5]") {
+  const auto grid = Grid(20, 18, 16);
+  const int rcap = 4;
+  const T::TTLayout L = T::MakeLayout(grid, rcap);
+  // which: 0 identity on a generic rank-(3, 4) TT, 1 entropy of two equilibria + a
+  // rank-1 perturbation, 2 the same with rank cap 2, 3 SampledMinF with a planted min.
+  for (const int which : {0, 1, 2, 3}) {
+    T::CrossParams prm;
+    if (which == 2) prm.rank_max = 2;
+    const auto sc = T::MakeCrossScratch(grid, rcap, prm);
+    View a("a", L.Size()), work("work", sc.RealSize());
+    Kokkos::View<int *> iwork("iwork", sc.IntSize());
+    // out: [max node err / max |g|, |sum g - exact| / |exact|, max(q1, q2), cap hit,
+    //       converged, evals, min f found, true min f]
+    View out("out", 8);
+    Kokkos::parallel_for(
+        "cross", 1, KOKKOS_LAMBDA(const int) {
+          const auto A = T::MakeOutRef(T::PtrData{a.data()}, L);
+          if (which == 0) {
+            A.SetRanks(3, 4);
+            int h = 0;
+            for (int x = 0; x < grid.nv[0] * 3; ++x)
+              a.data()[L.Slot1() + x] = 1.0 + 0.5 * Hash(h++);
+            for (int x = 0; x < 3 * grid.nv[1] * 4; ++x)
+              a.data()[L.Slot2() + x] = Hash(h++);
+            for (int x = 0; x < 4 * grid.nv[2]; ++x)
+              a.data()[L.Slot3() + x] = Hash(h++);
+          } else {
+            K::Maxwellian eq[2];
+            K::EquilibriumTarget t0{0.5, {-1.2, 0.3, 0.0}, {0.8, 0.8, 0.8}};
+            K::EquilibriumTarget t1{0.5, {1.2, -0.2, 0.1}, {1.1, 1.1, 1.1}};
+            K::SolveEquilibrium(grid, t0, K::EquilibriumParams{}, eq[0]);
+            K::SolveEquilibrium(grid, t1, K::EquilibriumParams{}, eq[1]);
+            T::FillMaxwellians(grid, eq, 2, A);
+            // Third rank-1 term: -1e-12 at every node (rounding-noise-like negative
+            // tails), or for which = 3 a smooth negative lobe -1e-3 at node (13, 5, 11)
+            // of width 3 nodes (an isolated single-node spike is not found by the
+            // fiber search; the cross diagnostics assume smooth f, S1-Q21).
+            A.SetRanks(3, 3);
+            for (int b = 0; b < 3; ++b)
+              for (int j = 0; j < grid.nv[1]; ++j)
+                for (int c = 0; c < 3; ++c)
+                  if (b == 2 || c == 2) A.G2(c, j, b) = 0.0;
+            const auto lobe = [](const int i, const int c) {
+              return std::exp(-0.5 * (i - c) * (i - c) / 9.0);
+            };
+            for (int i = 0; i < grid.nv[0]; ++i)
+              A.G1(i, 2) = (which == 3) ? -1.0e-3 * lobe(i, 13) : -1.0e-12;
+            for (int j = 0; j < grid.nv[1]; ++j)
+              A.G2(2, j, 2) = (which == 3) ? lobe(j, 5) : 1.0;
+            for (int k = 0; k < grid.nv[2]; ++k)
+              A.G3(2, k) = (which == 3) ? lobe(k, 11) : 1.0;
+          }
+          const auto F = T::MakeRef(T::PtrData{a.data()}, L);
+          Real fmin = 1.0e300;
+          T::ForEachNode(F, [&](const int, const int, const int, const Real v) {
+            fmin = std::min(fmin, v);
+          });
+          out(7) = fmin;
+          out(6) = T::SampledMinF(F, prm.trial_factor);
+          if (which == 3) return;
+          const T::EntropyPhi ent{1.0e-12};
+          Real fscale = 0.0;
+          T::CrossInfo info;
+          if (which == 0) {
+            const auto id = [](const Real f, const Real) { return f; };
+            info = T::TTCross(sc, work.data(), iwork.data(), F, id, prm);
+          } else {
+            info = T::TTCross(sc, work.data(), iwork.data(), F, ent, prm);
+          }
+          fscale = info.fscale;
+          const auto G = T::CrossOutput(sc, work.data());
+          Real emax = 0.0, gmax = 0.0, gsum = 0.0, hsum = 0.0;
+          T::ForEachNode(F, [&](const int i, const int j, const int k, const Real v) {
+            const Real gx = (which == 0) ? v : ent(v, fscale);
+            gmax = std::max(gmax, std::abs(gx));
+            emax = std::max(emax, std::abs(G(i, j, k) - gx));
+            gsum += G(i, j, k);
+            hsum += (v > 0.0) ? v * (std::log(v) - 1.0) : 0.0;
+          });
+          out(0) = emax / gmax;
+          out(1) = (which == 0) ? 0.0 : std::abs(gsum - hsum) / std::abs(hsum);
+          out(2) = std::max(info.q1, info.q2);
+          out(3) = info.cap_hit ? 1.0 : 0.0;
+          out(4) = info.converged ? 1.0 : 0.0;
+          out(5) = info.evals;
+        });
+    const auto h = ToHost(out);
+    INFO("case " << which << ": node err " << h[0] << ", sum err " << h[1] << ", rank "
+                 << h[2] << ", evals " << h[5] << ", min f " << h[6] << " (true " << h[7]
+                 << ")");
+    CHECK(h[6] >= h[7]); // a sampled min is an upper bound
+    if (which == 0) {
+      CHECK(h[0] < 1.0e-12);
+      CHECK(h[2] <= 4);
+      CHECK(h[4] == 1.0);
+    } else if (which == 1) {
+      CHECK(h[0] < 1.0e-9);
+      CHECK(h[1] < 1.0e-10);
+      CHECK(h[3] == 0.0);
+      CHECK(h[4] == 1.0);
+    } else if (which == 2) {
+      CHECK(h[3] == 1.0);
+      CHECK(h[4] == 0.0);
+      CHECK(h[2] <= 2);
+    } else {
+      CHECK(h[6] == Catch::Approx(h[7]).epsilon(1.0e-12));
+      CHECK(h[7] < -5.0e-4);
     }
   }
 }
