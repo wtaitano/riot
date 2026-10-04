@@ -41,6 +41,7 @@ namespace riot {
 
 // need this because it's static
 std::vector<TaskCollectionFnPtr> RiotDriver::OperatorSplitTasks;
+std::vector<TaskCollectionFnPtr> RiotDriver::PreHydroTasks;
 
 //----------------------------------------------------------------------------------------
 //! \fn  void RiotDriver::RegisterPgens
@@ -246,7 +247,13 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   if (do_gravity) packages.Add(Gravity::Initialize(pin.get()));
   if (do_kinetics) {
     packages.Add(Kinetics::Initialize(pin.get()));
-    OperatorSplitTasks.push_back(&Kinetics::KineticsTasks);
+    // With the closure coupling hydro interpolates the closure between the f before and
+    // after the kinetics step, so kinetics runs first.
+    if (Kinetics::ClosureCoupling(pin.get())) {
+      PreHydroTasks.push_back(&Kinetics::KineticsTasks);
+    } else {
+      OperatorSplitTasks.push_back(&Kinetics::KineticsTasks);
+    }
   }
 
   riot_plugins::Plugins::Initialize(pin.get(), packages);

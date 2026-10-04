@@ -61,6 +61,10 @@ VARIABLE_VECTOR(kinetics, tt_round, false, 3);
 // representation = tt, tt_diag = cross, per cell at the last history output: cross
 // entropy integrand sum, phi evaluations, max(q1, q2), rank-cap hit, not converged.
 VARIABLE_VECTOR(kinetics, tt_cross, false, 5);
+// closure_coupling: non-equilibrium stress Pi (xx, yy, zz, xy, xz, yz; traceless) and
+// heat flux q (x, y, z) from f at the start (old) and end (new) of the kinetics step.
+VARIABLE_VECTOR(kinetics, closure_old, false, 9);
+VARIABLE_VECTOR(kinetics, closure_new, false, 9);
 } // namespace fields
 
 // Particle physics constants of the single species, derived from the hydro material.
@@ -71,8 +75,25 @@ struct Species {
 
 std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin);
 
-// Operator-split entry point, run after the hydro step.
+// kinetics/closure_coupling: hydro fluxes take the kinetic stress and heat flux. Read
+// by hydro (face velocities), the driver (step order) and the kinetics package.
+inline bool ClosureCoupling(ParameterInput *pin) {
+  return pin->GetOrAddBoolean("physics", "kinetics", false) &&
+         pin->GetOrAddBoolean("kinetics", "closure_coupling", true,
+                              "Add the kinetic stress and heat flux to the hydro fluxes");
+}
+
+// Operator-split entry point. Runs after the hydro step, or before it with
+// closure_coupling (the hydro stages then interpolate the closure in time).
 TaskCollection KineticsTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt);
+
+// closure_coupling (kinetics_closure.cpp). ComputeClosure: Pi and q of f on the entire
+// block (the ghosts of f must be current) into closure_new. ShiftClosure: closure_old <-
+// closure_new. AddClosureFluxes: adds (1 - w) old + w new to the hydro momentum and
+// energy fluxes of md (w = c_s of the RK stage).
+TaskStatus ComputeClosure(MeshData<Real> *md);
+TaskStatus ShiftClosure(MeshData<Real> *md);
+TaskStatus AddClosureFluxes(MeshData<Real> *md, const Real w);
 
 // Time integrator of streaming + collisions (kinetics_tasks.cpp).
 enum class Integrator { sl_dirk2, strang };
@@ -100,6 +121,9 @@ inline Representation GetRepresentation(const StateDescriptor *pkg) {
 
 // Abort if a restart file's storage layout of f differs from this run's (kinetics_init).
 void CheckRestartLayout(Mesh *pm, ParameterInput *pin, parthenon::SimTime &tm);
+// UserWorkBeforeLoop: CheckRestartLayout, then (closure_coupling) the closure of the
+// initial or restarted f.
+void BeforeLoop(Mesh *pm, ParameterInput *pin, parthenon::SimTime &tm);
 
 // Fill f from the hydro state (equilibrium, bi-Maxwellian or two drifting Maxwellians).
 void PostInitialization(Mesh *pm, ParameterInput *pin, MeshData<Real> *md);

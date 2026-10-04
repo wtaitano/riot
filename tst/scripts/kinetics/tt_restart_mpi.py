@@ -205,7 +205,10 @@ def analyze():
             logger.warning(f"{case}: history shapes {ha.shape} vs {hb.shape}")
             ok = False
             continue
-        rel = np.max(np.abs(ha - hb) / np.maximum(np.abs(ha), 1.0e-300))
+        # Relative, with a floor of 1e-16 (the decks are O(1)): columns that are zero to
+        # roundoff (hydro transverse momentum, which the closure coupling feeds with
+        # ~1e-33 from Pi_xy, Pi_xz) are summed in a different order on 4 ranks.
+        rel = np.max(np.abs(ha - hb) / np.maximum(np.abs(ha), 1.0e-16))
         logger.info(f"{case}: {len(files)} files bitwise, history rel diff {rel:.2e}")
         if rel > 1.0e-13:
             logger.warning(f"{case}: history differs by {rel:.2e}")

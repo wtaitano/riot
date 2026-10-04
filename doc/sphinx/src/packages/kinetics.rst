@@ -12,9 +12,10 @@ The ``kinetics`` package evolves the velocity distribution function
 operator, in one to three spatial dimensions and always three velocity dimensions. It
 is a dense discrete-velocity solver on a fixed uniform velocity grid and serves as the
 reference for later compressed (tensor-train) representations. The hydrodynamics of
-Chapter :ref:`chap:hydro` is evolved alongside but is not coupled to the kinetic gas:
-the two start from the same state and evolve independently, which allows side-by-side
-comparison in the continuum limit.
+Chapter :ref:`chap:hydro` is evolved alongside. By default its fluxes take the kinetic
+stress and heat flux (see `Closure coupling`_); with
+``kinetics/closure_coupling = false`` the two start from the same state and evolve
+independently, which allows side-by-side comparison in the continuum limit.
 
 Governing Equations
 -------------------
@@ -367,6 +368,43 @@ cross did not converge).
   :math:`64^3` (30 to 60 % at :math:`16^3`).
 
 Raw data: ``s1/step9/RESULTS.md`` of the kinetic project.
+
+Closure coupling
+----------------
+
+With ``closure_coupling = true`` (the default) the hydro momentum and energy fluxes take
+the non-equilibrium stress and the heat flux of :math:`f`, so hydro solves the moment
+equations of the BGK model instead of the Euler equations. On a face with normal
+:math:`d`,
+
+.. math::
+
+     F^{\rho u_i}_d \mathrel{+}= \Pi_{id}, \qquad
+     F^{E}_d \mathrel{+}= \Pi_{id}\,u_i + q_d, \qquad
+     \Pi_{ij} = P_{ij} - p\,\delta_{ij},
+
+with :math:`u` the hydro face velocity and :math:`\Pi, q` the average of the two cells
+adjacent to the face. The coupling is one-way: :math:`f` does not see hydro. Hydro mass,
+momentum and energy stay conserved to roundoff (flux form).
+
+The kinetics step runs before the hydro step. The closure is evaluated from :math:`f`
+at :math:`t^n` and :math:`t^{n+1}` on the entire block (ghost cells follow the kinetic
+boundary conditions), and RK stage :math:`s` uses
+:math:`(1-c_s)\,\Pi^n + c_s\,\Pi^{n+1}`, so the coupling is second order in time.
+Cartesian coordinates only; no mesh refinement.
+
+Checks (``tst/scripts/kinetics/closure_coupling.py``): the gap between the hydro and the
+kinetic density, velocity and temperature shrinks with the mesh (it does not without the
+coupling at :math:`\nu = 0`); in the continuum limit :math:`\Pi`, :math:`q` and their
+effect on hydro scale like :math:`1/\nu`; the TT closure at ``tt_eps = 1e-14`` matches
+the dense one.
+
+.. note::
+
+   On a velocity grid with different spacings per axis the discrete equilibrium is
+   slightly anisotropic (:math:`P_{xx} \ne p` at the :math:`10^{-3}` level for
+   :math:`24\times 12\times 12` nodes on :math:`[-8, 8]^3`). The coupling passes this to
+   hydro as a spurious stress; use equal spacings when the closure matters.
 
 Output
 ------

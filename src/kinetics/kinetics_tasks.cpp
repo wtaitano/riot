@@ -12,7 +12,9 @@
 //========================================================================================
 // This file was made in part with generative AI.
 
-// Operator-split task collection of the kinetics package, run after the hydro step.
+// Operator-split task collection of the kinetics package, run after the hydro step, or
+// before it with closure_coupling: the step then starts with closure_old <- closure_new
+// and ends with an f ghost exchange and closure_new <- closure of the advanced f.
 //
 // The hydro step dt is split into n substeps h = dt / n, with n the smallest count for
 // which the fastest velocity node moves at most cfl cells in any one semi-Lagrangian
@@ -151,6 +153,14 @@ TaskCollection KineticsTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
     if (merge) steps.emplace_back(0.5 * h, no_relax);
   }
 
+  const bool closure = pkg->Param<bool>("closure_coupling");
+  if (closure) {
+    TaskRegion &shift_region = tc.AddRegion(num_partitions);
+    for (int i = 0; i < num_partitions; ++i)
+      shift_region[i].AddTask(none, ShiftClosure,
+                              pm->mesh_data.GetOrAdd("base", i).get());
+  }
+
   // kinetics.eq_fallback (and tt_round) are OneCopy, so k0 and k1 share them. TT
   // streaming also adds to tt_round, so the reset runs for collisionless TT runs too.
   if (collide || tt) {
@@ -197,6 +207,19 @@ TaskCollection KineticsTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
       auto &k0 = pm->mesh_data.GetOrAdd(k0_name, i);
       auto &k1 = pm->mesh_data.GetOrAdd(k1_name, i);
       region[i].AddTask(none, CopyF, k0.get(), k1.get());
+    }
+  }
+
+  // Closure of the advanced f on the entire block; k0 holds f in base's memory.
+  if (closure) {
+    TaskRegion &region = tc.AddRegion(num_partitions);
+    for (int i = 0; i < num_partitions; ++i) {
+      auto &tl = region[i];
+      auto &k0 = pm->mesh_data.GetOrAdd(k0_name, i);
+      auto recv =
+          tl.AddTask(none, parthenon::StartReceiveBoundBufs<BoundaryType::any>, k0);
+      auto bc = parthenon::AddBoundaryExchangeTasks(recv, tl, k0, pm->multilevel);
+      tl.AddTask(bc, ComputeClosure, pm->mesh_data.GetOrAdd("base", i).get());
     }
   }
 

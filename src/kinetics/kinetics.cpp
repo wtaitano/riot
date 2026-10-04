@@ -230,6 +230,18 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
              pin->GetOrAddBoolean(input_block, "merge_half_steps", true,
                                   "strang: merge adjacent half steps of substeps"));
   params.Add("substeps", 0, Params::Mutability::Mutable);
+
+  // Closure coupling to hydro (CLOSURE_DESIGN.md)
+  const bool closure = ClosureCoupling(pin);
+  params.Add("closure_coupling", closure);
+  if (closure) {
+    PARTHENON_REQUIRE(parthenon::IsCoord<parthenon::UniformCartesian>(),
+                      "kinetics: closure_coupling needs Cartesian coordinates");
+    // closure_old carries over from the previous step and is not remeshed.
+    PARTHENON_REQUIRE(pin->GetOrAddString("parthenon/mesh", "refinement", "none") ==
+                          "none",
+                      "kinetics: closure_coupling does not support mesh refinement");
+  }
   PARTHENON_REQUIRE(Globals::nghost >= 1, "kinetics: needs at least one ghost cell");
 
   // Initialization from the hydro state
@@ -281,6 +293,14 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
                MetadataOperatorSplit},
               std::vector<int>({6}));
   pkg->AddField<fields::stress>(m6);
+  if (closure) {
+    // No OperatorSplit flag: the hydro stage registers (u0, u1) read the closure.
+    // OneCopy, so they share base's memory.
+    Metadata m9({Metadata::Cell, Metadata::Derived, Metadata::OneCopy, MetadataKinetics},
+                std::vector<int>({9}));
+    pkg->AddField<fields::closure_old>(m9);
+    pkg->AddField<fields::closure_new>(m9);
+  }
   if (tt) {
     Metadata m2({Metadata::Cell, Metadata::Derived, Metadata::OneCopy, MetadataKinetics,
                  MetadataOperatorSplit},
@@ -304,7 +324,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   // Hooks
   pkg->PostInitializationMesh = PostInitialization;
   pkg->UserWorkBeforeOutputMesh = SetDerivedMomentsMesh;
-  pkg->UserWorkBeforeLoopMesh = CheckRestartLayout;
+  pkg->UserWorkBeforeLoopMesh = BeforeLoop;
 
   // History
   using parthenon::UserHistoryOperation;

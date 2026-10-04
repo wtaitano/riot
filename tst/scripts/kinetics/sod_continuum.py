@@ -25,7 +25,8 @@
 #     sl_dirk2 and 5e-11 with strang, and 3e-12 with eq_tol = 1e-15. The
 #     non-conservative limiter this guards against gives 3e-3.
 #   * the shock position is within 2 cells of the exact one at 512 cells.
-# The exact solver is checked against RIOT's hydro solution on the same mesh.
+# The exact solver is checked against RIOT's hydro solution on the same mesh, which is
+# uncoupled from the kinetics (kinetics/closure_coupling = false).
 
 import logging
 
@@ -47,6 +48,7 @@ common = [
     "parthenon/output1/dt=0.2",
     "parthenon/output3/dt=-1",
     "parthenon/output2/data_format=%.17e",
+    "kinetics/closure_coupling=false",
 ]
 nu_sweep = [1.0e2, 1.0e3, 1.0e4]
 nx_sweep = [128, 256, 512]

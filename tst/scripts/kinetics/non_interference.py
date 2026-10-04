@@ -13,9 +13,11 @@
 # This file was made in part with generative AI.
 
 # Regression test R8 (claude_sessions/kinetic_bgk/S0_DESIGN.md): enabling the kinetics
-# package must leave the hydro solution bitwise unchanged. Runs the kinetics Sod deck
-# with physics/kinetics on and off and compares every hydro field in every dump. As a
-# check that the comparator can fail, the first and last dumps of one run must differ.
+# package without the closure coupling (kinetics/closure_coupling = false) must leave the
+# hydro solution bitwise unchanged. Runs the kinetics Sod deck with physics/kinetics on
+# and off and compares every hydro field in every dump. Controls: the first and last
+# dumps of one run differ, and with the closure coupling on (the default) hydro differs
+# from the kinetics-off run in the final dump.
 
 import logging
 import os
@@ -39,19 +41,23 @@ hydro_vars = [
 dumps = ["00000", "00001", "00002", "final"]
 
 
-def problem_id(kinetics):
-    return "kinetics_r8_" + ("on" if kinetics else "off")
+def problem_id(kinetics, closure=False):
+    return (
+        "kinetics_r8_" + ("on" if kinetics else "off") + ("_closure" if closure else "")
+    )
 
 
 def run(**kwargs):
-    clean_outputs(problem_id(True), problem_id(False))
+    cases = [(True, False), (False, False), (True, True)]
+    clean_outputs(*[problem_id(*c) for c in cases])
     riot.generate(input_id + ".py")
-    for kinetics in (True, False):
+    for kinetics, closure in cases:
         riot.run(
             input_id + ".rin",
             [
-                "parthenon/job/problem_id=" + problem_id(kinetics),
+                "parthenon/job/problem_id=" + problem_id(kinetics, closure),
                 "physics/kinetics=" + ("true" if kinetics else "false"),
+                "kinetics/closure_coupling=" + ("true" if closure else "false"),
                 "parthenon/output1/variables="
                 + ",".join(v for v in hydro_vars if not v.startswith("c.c.mat")),
                 "parthenon/output3/dt=-1",
@@ -60,8 +66,8 @@ def run(**kwargs):
         )
 
 
-def dump(kinetics, n):
-    return f"build/src/{problem_id(kinetics)}.out1.{n}.phdf"
+def dump(kinetics, n, closure=False):
+    return f"build/src/{problem_id(kinetics, closure)}.out1.{n}.phdf"
 
 
 def analyze():
@@ -79,5 +85,11 @@ def analyze():
     # Negative control: the comparator must see the evolution of the solution.
     if not compare_bitwise(dump(True, dumps[0]), dump(True, dumps[-1]), logger, names):
         logger.warning("comparator found no change between first and last dump")
+        ok = False
+    # Control: the closure coupling does change hydro.
+    if not compare_bitwise(
+        dump(True, dumps[-1], True), dump(False, dumps[-1]), logger, names
+    ):
+        logger.warning("hydro unchanged with the closure coupling on")
         ok = False
     return ok

@@ -41,6 +41,7 @@ set (SRC_LIST
   kinetics/kinetics_bcs.cpp
   kinetics/kinetics_bcs.hpp
   kinetics/kinetics_cell.hpp
+  kinetics/kinetics_closure.cpp
   kinetics/kinetics_init.cpp
   kinetics/kinetics_output.cpp
   kinetics/kinetics_tasks.cpp

@@ -20,6 +20,8 @@
 #     an exact discrete equilibrium of the walls and stays unchanged to roundoff,
 #   * diffuse walls hotter than a uniform gas (nu = 0): the gas energy increases
 #     every step (negative control for the energy check of the specular case).
+# Kinetic walls with the deck's outflow hydro boundaries: the closure coupling is off
+# (kinetics/closure_coupling = false), since hydro does not see the walls.
 
 import logging
 
@@ -38,6 +40,7 @@ common = [
     "kinetics/nv3=8",
     "kinetics/min_vth_over_dv=0",
     "kinetics/sl_order=1",
+    "kinetics/closure_coupling=false",
     "parthenon/output1/dt=0.2",
     "parthenon/output3/dt=-1",
     "parthenon/output2/data_format=%.17e",

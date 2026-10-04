@@ -32,6 +32,7 @@
 #include "gravity/gravity.hpp"
 #include "hydro/hydro.hpp"
 #include "ionization/ionization.hpp"
+#include "kinetics/kinetics.hpp"
 #include "laser/laser.hpp"
 #include "levelsets/levelsets.hpp"
 #include "materials/materials.hpp"
@@ -90,6 +91,8 @@ RiotDriver::RiotDriver(ParameterInput *pin, ApplicationInput *app_in, Mesh *pm)
   do_gravity = riot_pkg->Param<bool>("do_gravity");
   do_ionization = riot_pkg->Param<bool>("do_ionization");
   curvilinear = riot_pkg->Param<bool>("curvilinear");
+  kinetic_closure = riot_pkg->Param<bool>("do_kinetics") &&
+                    pm->packages.Get("kinetics")->Param<bool>("closure_coupling");
 
   // enable FPE trapping
   const bool trap_fpes = riot_pkg->Param<bool>("trap_fpes");
@@ -148,6 +151,11 @@ TaskListStatus RiotDriver::Step() {
     if (status != TaskListStatus::complete) return status;
     bool reset_dt = Laser::CheckDt(pmesh, &integrator->dt);
     if (reset_dt) tm.dt = integrator->dt;
+  }
+
+  for (auto &fn : PreHydroTasks) {
+    auto status = fn(pmesh, tm, integrator->dt).Execute();
+    if (status != TaskListStatus::complete) return status;
   }
 
   auto status = RiotStepTasks().Execute();
@@ -236,8 +244,16 @@ TaskCollection RiotDriver::RiotStepTasks() {
             hydro_flx | mix_flx, Ionization::ComputePlasmaViscousFluxes, mu0.get());
       }
 
+      // kinetic stress and heat flux, interpolated to the stage time
+      TaskID closure_flx = none;
+      if (kinetic_closure) {
+        closure_flx =
+            tl.AddTask(hydro_flx | mix_flx | plasma_viscosity_flx,
+                       Kinetics::AddClosureFluxes, mu0.get(), integrator->c[stage - 1]);
+      }
+
       // send flux corrections
-      auto send_flx = tl.AddTask(hydro_flx | plasma_viscosity_flx | mix_flx,
+      auto send_flx = tl.AddTask(hydro_flx | plasma_viscosity_flx | mix_flx | closure_flx,
                                  parthenon::LoadAndSendFluxCorrections, mu0);
 
       // geometric sources, if curvilinear

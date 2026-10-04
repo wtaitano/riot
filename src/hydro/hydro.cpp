@@ -27,6 +27,7 @@
 #include <parthenon/package.hpp>
 
 #include "hydro.hpp"
+#include "kinetics/kinetics.hpp"
 #include "materials/materials.hpp"
 #include "microphysics/eos_riot.hpp"
 #include "microphysics/pte_closure.hpp"
@@ -217,7 +218,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
     hydro->AddField<ccbulk::strain_rate>(m);
   }
 
-  const bool store_vf = do_ionization || do_strength;
+  // Kinetic closure coupling needs the face velocities for Pi . u in the energy flux.
+  const bool store_vf = do_ionization || do_strength || Kinetics::ClosureCoupling(pin);
   params.Add("store_vf", store_vf);
   if (store_vf) {
     // Face Velocities (to compute strain rate)
