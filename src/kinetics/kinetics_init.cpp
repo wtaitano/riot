@@ -131,6 +131,34 @@ void PostInitialization(Mesh *pm, ParameterInput *pin, MeshData<Real> *md) {
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn  void Kinetics::CheckRestartLayout
+//! \brief A restart must use the storage layout of f it was written with. Parthenon reads
+//! the components of f by position, so a different Nv, rank cap or representation would
+//! be read silently wrong (S1_DESIGN.md, S1-Q32). Runs as UserWorkBeforeLoop, i.e. after
+//! the restart file's parameters are read and before the first outputs. A larger layout
+//! than the file's already fails in Parthenon's HDF5 read of f; restart files written
+//! before f_layout_file existed leave it at {-1} and are refused as well.
+void CheckRestartLayout(Mesh *pm, ParameterInput *pin, parthenon::SimTime &tm) {
+  auto pkg = pm->packages.Get(pkg_name);
+  const auto &mine = pkg->Param<std::vector<int>>("f_layout");
+  const auto &file = pkg->Param<std::vector<int>>("f_layout_file");
+  if (mine == file) return;
+  std::stringstream msg;
+  msg << "kinetics: restart file has f layout {representation, nv1, nv2, nv3, "
+         "tt_rank_max} = {";
+  for (std::size_t a = 0; a < file.size(); ++a)
+    msg << (a ? ", " : "") << file[a];
+  msg << "}, this run {";
+  for (std::size_t a = 0; a < mine.size(); ++a)
+    msg << (a ? ", " : "") << mine[a];
+  msg << "}; restart with the same kinetics/representation, nv1-3 and tt_rank_max";
+  if (file.size() == 1 && file[0] == -1)
+    msg << " (the restart file does not record the layout: it was written before the "
+           "check existed)";
+  PARTHENON_FAIL(msg);
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  ResolutionReport Kinetics::CheckResolution
 //! \brief Mass on the outermost velocity-node layer and thermal resolution, globally.
 ResolutionReport CheckResolution(Mesh *pm, MeshData<Real> *md, const std::string &when) {

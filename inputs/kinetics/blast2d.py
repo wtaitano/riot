@@ -46,6 +46,16 @@ def make_input():
 
     riot.input("parthenon/output2", file_type="hst", dt=0.01, data_format="%.17e")
 
+    # Restarts carry kinetics.f or kinetics.f_tt; see inputs/kinetics/sod.py for the
+    # write_xdmf / compression settings.
+    riot.input(
+        "parthenon/output3",
+        file_type="rst",
+        dt=0.05,
+        write_xdmf=False,
+        hdf5_compression_level=0,
+    )
+
     riot.input(
         "parthenon/time",
         nlim=-1,

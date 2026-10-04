@@ -84,6 +84,19 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   }
   const VelocityGrid grid = MakeVelocityGrid(nv, vmin, vmax);
   params.Add("grid", grid);
+  // Storage layout of f: {representation (0 dense, 1 tt), nv1, nv2, nv3, tt_rank_max}.
+  // "f_layout" is this run's; "f_layout_file" is overwritten from the restart file on a
+  // restart (Mutability::Restart) and checked against it before f is used.
+  const int rcap_in = tt ? pin->GetOrAddInteger(input_block, "tt_rank_max", 16,
+                                                "Largest TT rank (sets the storage per "
+                                                "cell)")
+                         : 0;
+  const std::vector<int> layout = {tt ? 1 : 0, nv[0], nv[1], nv[2], rcap_in};
+  params.Add("f_layout", layout);
+  // On a restart, start from {-1} so that a file without the parameter (written before
+  // it existed) fails the check instead of passing silently.
+  params.Add("f_layout_file", Globals::is_restart ? std::vector<int>{-1} : layout,
+             Params::Mutability::Restart);
 
   // Tensor-train representation (S1_DESIGN.md)
   if (tt) {
@@ -94,8 +107,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
     PARTHENON_REQUIRE(round.eps >= 0.0 && round.eps < 1.0,
                       "kinetics: tt_eps must be in [0, 1)");
     params.Add("tt_round", round);
-    const int rcap = pin->GetOrAddInteger(input_block, "tt_rank_max", 16,
-                                          "Largest TT rank (sets the storage per cell)");
+    const int rcap = rcap_in;
     PARTHENON_REQUIRE(rcap >= 2 && rcap <= TT::kMaxRank,
                       "kinetics: tt_rank_max must be in [2, " +
                           std::to_string(TT::kMaxRank) + "]");
@@ -265,6 +277,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   // Hooks
   pkg->PostInitializationMesh = PostInitialization;
   pkg->UserWorkBeforeOutputMesh = SetDerivedMomentsMesh;
+  pkg->UserWorkBeforeLoopMesh = CheckRestartLayout;
 
   // History
   using parthenon::UserHistoryOperation;

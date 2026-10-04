@@ -95,6 +95,9 @@ inline Representation GetRepresentation(const StateDescriptor *pkg) {
                                                            : Representation::dense;
 }
 
+// Abort if a restart file's storage layout of f differs from this run's (kinetics_init).
+void CheckRestartLayout(Mesh *pm, ParameterInput *pin, parthenon::SimTime &tm);
+
 // Fill f from the hydro state (equilibrium, bi-Maxwellian or two drifting Maxwellians).
 void PostInitialization(Mesh *pm, ParameterInput *pin, MeshData<Real> *md);
 

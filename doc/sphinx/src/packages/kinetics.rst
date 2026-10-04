@@ -286,6 +286,15 @@ derived output fields are the same as for ``dense``, plus ``kinetics.tt_rank``
      - Nonlinear diagnostics: ``exact`` (decompress). ``cross`` (DEIM cross
        approximation) is planned.
 
+Restarts carry ``kinetics.f_tt`` (bitwise round trip), and runs on any number of MPI
+ranks give bitwise identical fields. A restart must keep ``representation``,
+``nv1..nv3`` and ``tt_rank_max``. Parthenon reads the components of ``f`` by position
+before the package can check anything, so a mismatch is caught in two ways: if the new
+layout is larger than the stored one, reading ``f`` fails with an HDF5 "selection not
+within extent" error; otherwise the stored layout is compared on the first step and the
+run aborts with a message naming both layouts. Restart files that do not record the
+layout (written by earlier versions of the package) are refused.
+
 The history file adds ``kinetics_tt_ranks_0..3`` (cell count, sum of :math:`r_1`, sum of
 :math:`r_2`, cells at ``tt_rank_max``), ``kinetics_tt_round_0..2`` (over the last hydro
 step and all cells: sum of the relative discarded norms of the roundings, rank-cap hits,
