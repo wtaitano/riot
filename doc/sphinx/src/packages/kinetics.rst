@@ -369,6 +369,17 @@ cross did not converge).
 
 Raw data: ``s1/step9/RESULTS.md`` of the kinetic project.
 
+**2D-3V at the dense memory limit.** The ``blast2d`` deck at :math:`64^2` cells with
+:math:`64^3` velocity nodes (cubic box, closure coupling on, 8 MPI ranks, ``t = 0.1``) needs
+about 12.5 GiB per copy of a dense :math:`f`, at the limit of a 32 GB machine; TT at
+``tt_rank_max = 32`` peaks at about 2 GB per rank. ``tt_eps = 1e-8`` agrees with a
+``tt_eps = 1e-12`` reference to :math:`8\times 10^{-7}` (relative, kinetic and hydro
+moments) and runs in 12 minutes. With ``tt_eps = 1e-12`` the ranks reach 28, so
+``tt_rank_max = 24`` is hit in more than half of the cells; the capped solution still
+differs from the uncapped one by only :math:`2\times 10^{-10}`. At the same
+:math:`N_v` on a :math:`16^2` mesh, TT at ``tt_eps = 1e-14`` matches dense to
+:math:`2.4\times 10^{-12}`. Raw data: ``s2/RESULTS.md`` of the kinetic project.
+
 Closure coupling
 ----------------
 
