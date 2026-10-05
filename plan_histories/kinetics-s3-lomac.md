@@ -12,7 +12,7 @@ parts:
 - **LoMaC (`kinetics/lomac`, default false).** After each step, every cell is corrected
   with f ← f + M P, so the kinetic density, momentum and energy equal the hydro ones.
 
-Scope: the uncommitted changes on `taitano/vlasov` on top of S2 (`2572761`). The design
+Scope: the uncommitted changes on `taitano/vlasov` on top of S2 (`489157a`). The design
 and decision log is `claude_sessions/kinetic_bgk/S3_DESIGN.md`; the decision numbers
 S3-Qn below refer to it. All measured numbers below come from its "Implementation log"
 (step 1, step 2, steps 3-6).

@@ -8,7 +8,7 @@ the memory limit of a 32 GB machine. S2 adds **no solver code**. It adds one sma
 regression test, a docs paragraph and the study scripts and results.
 
 Scope: the uncommitted changes on `taitano/vlasov` on top of the closure coupling
-(`1c0aece`). The design and decision log is `claude_sessions/kinetic_bgk/S2_DESIGN.md`;
+(`c0d4016`). The design and decision log is `claude_sessions/kinetic_bgk/S2_DESIGN.md`;
 the decision numbers S2-Qn below refer to it. All measured numbers below come from
 `claude_sessions/kinetic_bgk/s2/RESULTS.md`.
 
@@ -134,7 +134,7 @@ TT only):
 
 All runs were on CPU (Serial Kokkos + Open MPI). **No GPU runs were made.**
 
-- Full kinetics suite: 20/20 pass (2026-10-04, incl. the new `tt_closure2d`). Unit tests: ctest 47/47 at `1c0aece`; S2 adds no C++.
+- Full kinetics suite: 20/20 pass (2026-10-04, incl. the new `tt_closure2d`). Unit tests: ctest 47/47 at `c0d4016`; S2 adds no C++.
 
 ## Known limitations and open items
 

@@ -9,9 +9,9 @@ conditions, moments, restart and MPI all work on the TT cores directly. The dens
 solver (`representation = dense`, still the default) is unchanged and serves as the
 oracle. The scope is CPU and MPI only, with hydro on and uncoupled, as in S0.
 
-Scope: the commits on `taitano/vlasov` after S0 (`7cbaf3b`): `523ea78`, `e840d51`,
-`670b546`, `4841c61`, `5655e3f`, `862f8ce` (black only), `9b2f772`, `2cd9ffe` and
-`2fdfb99` (steps 1–8), plus step 9 (Nv scaling study and docs). The design and decision
+Scope: the commits on `taitano/vlasov` after S0 (`75a834e`): `4a67732`, `1e2263c`,
+`072cad9`, `54033d8`, `a1ccbb4`, `957627b` (black only), `252d984`, `4b8b504` and
+`b392d32` (steps 1–8), plus step 9 (Nv scaling study and docs). The design and decision
 log is `claude_sessions/kinetic_bgk/S1_DESIGN.md`. The decision numbers S1-Qn below refer
 to it.
 

@@ -9,7 +9,7 @@ solves the BGK moment equations instead of the Euler equations. The coupling is 
 f does not see hydro. It works with both the dense and the tensor-train (TT)
 representation.
 
-Scope: the uncommitted changes on `taitano/vlasov` on top of S1 (`52fdd00`). The design
+Scope: the uncommitted changes on `taitano/vlasov` on top of S1 (`6b06a28`). The design
 and decision log is `claude_sessions/kinetic_bgk/CLOSURE_DESIGN.md`; the decision numbers
 C-Qn below refer to it, and the sanity results are in its §7 implementation log.
 
