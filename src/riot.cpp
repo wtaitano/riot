@@ -42,6 +42,7 @@ namespace riot {
 // need this because it's static
 std::vector<TaskCollectionFnPtr> RiotDriver::OperatorSplitTasks;
 std::vector<TaskCollectionFnPtr> RiotDriver::PreHydroTasks;
+std::vector<TaskCollectionFnPtr> RiotDriver::PostStepTasks;
 
 //----------------------------------------------------------------------------------------
 //! \fn  void RiotDriver::RegisterPgens
@@ -254,6 +255,7 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
     } else {
       OperatorSplitTasks.push_back(&Kinetics::KineticsTasks);
     }
+    if (Kinetics::Lomac(pin.get())) PostStepTasks.push_back(&Kinetics::LomacTasks);
   }
 
   riot_plugins::Plugins::Initialize(pin.get(), packages);

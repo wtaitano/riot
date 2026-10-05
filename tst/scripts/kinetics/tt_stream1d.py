@@ -87,6 +87,8 @@ cases = {
         "kinetics/sod",
         box
         + [
+            "parthenon/mesh/ix1_bc=reflecting",
+            "parthenon/mesh/ox1_bc=reflecting",
             "kinetics/ix1_bc=specular",
             "kinetics/ox1_bc=specular",
             "kinetics/nu0=1.0e4",
@@ -96,6 +98,8 @@ cases = {
         "kinetics/sod",
         box
         + [
+            "parthenon/mesh/ix1_bc=reflecting",
+            "parthenon/mesh/ox1_bc=reflecting",
             "kinetics/ix1_bc=diffuse",
             "kinetics/ox1_bc=diffuse",
             "kinetics/ix1_wall_T=1.2",

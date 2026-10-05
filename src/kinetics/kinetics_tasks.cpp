@@ -112,6 +112,8 @@ TaskCollection KineticsTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
   std::vector<std::string> names = {tt ? fields::f_tt::name() : fields::f::name(),
                                     fields::eq_fallback::name()};
   if (tt) names.push_back(fields::tt_round::name());
+  const bool walls = HasCoupledWalls(pkg.get());
+  if (walls) names.push_back(fields::wall_flux::name()); // OneCopy: shared by k0, k1, k2
   auto &base = pm->mesh_data.Get();
   pm->mesh_data.AddShallow(k0_name, base, names);
   pm->mesh_data.Add(k1_name, pm->mesh_data.Get(k0_name));
@@ -159,6 +161,10 @@ TaskCollection KineticsTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
     for (int i = 0; i < num_partitions; ++i)
       shift_region[i].AddTask(none, ShiftClosure,
                               pm->mesh_data.GetOrAdd("base", i).get());
+    if (walls)
+      for (int i = 0; i < num_partitions; ++i)
+        shift_region[i].AddTask(none, ResetWallFlux,
+                                pm->mesh_data.GetOrAdd("base", i).get());
   }
 
   // kinetics.eq_fallback (and tt_round) are OneCopy, so k0 and k1 share them. TT
@@ -174,19 +180,27 @@ TaskCollection KineticsTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
   // kinetics/streaming = false: the relaxations of the same sequence, in place on k0
   // (0D tests; the substeps still follow the streaming limit).
   if (!pkg->Param<bool>("streaming")) {
-    for (const auto &[hs, relax] : steps) {
+    int last_relax = -1;
+    for (int s = 0; s < static_cast<int>(steps.size()); ++s)
+      if (steps[s].second) last_relax = s;
+    for (int s = 0; s < static_cast<int>(steps.size()); ++s) {
+      const auto &relax = steps[s].second;
       if (!relax) continue;
       TaskRegion &region = tc.AddRegion(num_partitions);
       for (int i = 0; i < num_partitions; ++i) {
         auto &k0 = pm->mesh_data.GetOrAdd(k0_name, i);
-        region[i].AddTask(none, Relax, k0.get(), *relax);
+        region[i].AddTask(none, Relax, k0.get(), *relax, s == last_relax);
       }
     }
     steps.clear();
   }
 
   int cur = 0; // register holding the current f
-  for (const auto &[hs, relax] : steps) {
+  for (int s = 0; s < static_cast<int>(steps.size()); ++s) {
+    const auto &[hs, relax] = steps[s];
+    // The last rounding of the step: the final relaxation, or the final SL step
+    // (S3-Q5, used by kinetics/lomac).
+    const bool last_step = (s + 1 == static_cast<int>(steps.size()));
     TaskRegion &region = tc.AddRegion(num_partitions);
     for (int i = 0; i < num_partitions; ++i) {
       auto &tl = region[i];
@@ -196,8 +210,9 @@ TaskCollection KineticsTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
           tl.AddTask(none, parthenon::StartReceiveBoundBufs<BoundaryType::any>, src);
       auto bc = parthenon::AddBoundaryExchangeTasks(recv, tl, src, pm->multilevel);
       MeshData<Real> *tmp = sweeps ? pm->mesh_data.GetOrAdd(k2_name, i).get() : nullptr;
-      auto stream = tl.AddTask(bc, Stream, src.get(), tmp, dst.get(), hs);
-      if (relax) tl.AddTask(stream, Relax, dst.get(), *relax);
+      auto stream =
+          tl.AddTask(bc, Stream, src.get(), tmp, dst.get(), hs, last_step && !relax);
+      if (relax) tl.AddTask(stream, Relax, dst.get(), *relax, last_step);
     }
     cur = 1 - cur;
   }

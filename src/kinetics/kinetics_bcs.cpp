@@ -22,6 +22,7 @@
 #include "kinetics/equilibrium.hpp"
 #include "kinetics/kinetics.hpp"
 #include "kinetics/kinetics_bcs.hpp"
+#include "kinetics/semi_lagrangian.hpp"
 #include "kinetics/tt_relax.hpp"
 #include "kinetics/tt_tensor.hpp"
 #include "kinetics/velocity_grid.hpp"
@@ -330,13 +331,17 @@ void EnrollKineticBCs(StateDescriptor *pkg, ParameterInput *pin) {
   const int nx2 = pin->GetInteger("parthenon/mesh", "nx2");
   const int nx3 = pin->GetInteger("parthenon/mesh", "nx3");
   const int ndim = (nx3 > 1) ? 3 : ((nx2 > 1) ? 2 : 1);
+  const bool coupled = pkg->Param<bool>("closure_coupling");
 
   std::array<WallState, 6> walls{};
+  std::array<bool, 6> coupled_walls{};
   for (int f = 0; f < 6; ++f) {
     const int d = f / 2;
     const bool inner = (f % 2 == 0);
     const std::string mesh_bc = pin->GetString("parthenon/mesh", faces[f] + "_bc");
-    const std::string def = (mesh_bc == "periodic") ? "periodic" : "outflow";
+    const std::string def = (mesh_bc == "periodic")     ? "periodic"
+                            : (mesh_bc == "reflecting") ? "specular"
+                                                        : "outflow";
     const std::string name =
         pin->GetOrAddString(input_block, faces[f] + "_bc", def,
                             {"periodic", "outflow", "specular", "diffuse"},
@@ -345,6 +350,21 @@ void EnrollKineticBCs(StateDescriptor *pkg, ParameterInput *pin) {
                       "kinetics/" + faces[f] +
                           "_bc must be periodic exactly when the mesh face is");
     if (name == "periodic" || d >= ndim) continue;
+    // Coupled hydro must see the same walls (S3_DESIGN.md, S3-Q10): a kinetic wall
+    // sits on a hydro no-penetration wall, a kinetic outflow face on a hydro outflow.
+    if (coupled) {
+      const bool wall = (name == "specular" || name == "diffuse");
+      PARTHENON_REQUIRE(mesh_bc == (wall ? "reflecting" : "outflow"),
+                        "kinetics/" + faces[f] + "_bc = " + name +
+                            " with closure_coupling needs parthenon/mesh/" + faces[f] +
+                            "_bc = " + (wall ? "reflecting" : "outflow"));
+      // The half-range upwind flux is the exact discrete wall flux of linear SL only
+      // (S3-Q17).
+      PARTHENON_REQUIRE(
+          !wall || pkg->Param<SLParams>("sl_params").order == 1,
+          "kinetics: kinetic walls with closure_coupling need sl_order = 1");
+      coupled_walls[f] = wall;
+    }
 
     KineticBC type = KineticBC::outflow;
     if (name == "specular") {
@@ -369,6 +389,7 @@ void EnrollKineticBCs(StateDescriptor *pkg, ParameterInput *pin) {
         MakeBC(f, type, pkg->Param<std::string>("representation") == "tt"));
   }
   pkg->AddParam("bc_wall_states", walls);
+  pkg->AddParam("coupled_walls", coupled_walls);
 }
 
 } // namespace Kinetics

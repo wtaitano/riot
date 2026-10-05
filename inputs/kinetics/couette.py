@@ -18,7 +18,8 @@
 # Cv = 1.5) between walls at x = 0 and x = 1. The walls move tangentially at -/+U and
 # are held at T_w = 1 +/- dT, small enough that the flow stays in the linear regime.
 # Constant nu = sqrt(2 theta) / l sets the mean free path l = mu sqrt(2 theta) / p
-# (mu = p / nu); l = 0.05 here, resolved by 4 cells.
+# (mu = p / nu); l = 0.05 here, resolved by 4 cells. Hydro sees the walls as
+# no-penetration (reflecting) walls, which kinetic walls require with closure coupling.
 
 import math
 
@@ -67,8 +68,8 @@ def make_input():
         nx1=80,
         x1min=0.0,
         x1max=1.0,
-        ix1_bc="outflow",
-        ox1_bc="outflow",
+        ix1_bc="reflecting",
+        ox1_bc="reflecting",
         nx2=1,
         x2min=-0.5,
         x2max=0.5,
@@ -105,6 +106,8 @@ def make_input():
         sl_order=2,
         sl_limiter="none",
         min_vth_over_dv=1.0,
+        # Kinetic transport test at sl_order 2; coupled kinetic walls need sl_order 1.
+        closure_coupling=False,
         ix1_bc="diffuse",
         ix1_wall_T=1.0 + dT,
         ix1_wall_u2=-U,

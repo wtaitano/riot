@@ -242,6 +242,20 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
                           "none",
                       "kinetics: closure_coupling does not support mesh refinement");
   }
+  // LoMaC: kinetic moments enslaved to hydro (S3_DESIGN.md, S3-Q8/Q16)
+  const bool lomac = Lomac(pin);
+  params.Add("lomac", lomac);
+  PARTHENON_REQUIRE(!lomac || closure,
+                    "kinetics: lomac = true needs closure_coupling = true");
+  PARTHENON_REQUIRE(!lomac || pin->GetOrAddBoolean("physics", "hydro", true),
+                    "kinetics: lomac = true needs hydro");
+  params.Add("lomac_skip_abort",
+             pin->GetOrAddReal(input_block, "lomac_skip_abort", 1.0e-3,
+                               "Abort if a larger fraction of cells skips the LoMaC "
+                               "correction"));
+  if (lomac && tt)
+    PARTHENON_REQUIRE(rcap_in >= 3,
+                      "kinetics: lomac with representation = tt needs tt_rank_max >= 3");
   PARTHENON_REQUIRE(Globals::nghost >= 1, "kinetics: needs at least one ghost cell");
 
   // Initialization from the hydro state
@@ -300,6 +314,15 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
                 std::vector<int>({9}));
     pkg->AddField<fields::closure_old>(m9);
     pkg->AddField<fields::closure_new>(m9);
+    Metadata m5w({Metadata::Cell, Metadata::Derived, Metadata::OneCopy, MetadataKinetics},
+                 std::vector<int>({5}));
+    pkg->AddField<fields::wall_flux>(m5w);
+  }
+  if (lomac) {
+    Metadata m2l({Metadata::Cell, Metadata::Derived, Metadata::OneCopy, MetadataKinetics,
+                  MetadataOperatorSplit},
+                 std::vector<int>({2}));
+    pkg->AddField<fields::lomac_stat>(m2l);
   }
   if (tt) {
     Metadata m2({Metadata::Cell, Metadata::Derived, Metadata::OneCopy, MetadataKinetics,
@@ -340,6 +363,9 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
       hst_vecs.emplace_back(parthenon::HistoryOutputVec(
           UserHistoryOperation::sum, HistoryCrossSums, "kinetics_tt_cross"));
   }
+  if (lomac)
+    hst_vecs.emplace_back(parthenon::HistoryOutputVec(
+        UserHistoryOperation::sum, HistoryLomacSums, "kinetics_lomac"));
   pkg->AddParam<>(parthenon::hist_vec_param_key, hst_vecs);
   parthenon::HstVar_list hst_vars = {};
   hst_vars.emplace_back(parthenon::HistoryOutputVar(UserHistoryOperation::min,

@@ -43,8 +43,11 @@ set (SRC_LIST
   kinetics/kinetics_cell.hpp
   kinetics/kinetics_closure.cpp
   kinetics/kinetics_init.cpp
+  kinetics/kinetics_lomac.cpp
   kinetics/kinetics_output.cpp
   kinetics/kinetics_tasks.cpp
+  kinetics/kinetics_walls.cpp
+  kinetics/lomac.hpp
   kinetics/moments.hpp
   kinetics/semi_lagrangian.cpp
   kinetics/semi_lagrangian.hpp

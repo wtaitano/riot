@@ -34,7 +34,7 @@ namespace {
 
 // representation = tt: one team per cell (team scratch level 1 holds the rounding work
 // arrays, see tt_relax.hpp); the cell is relaxed by one thread of the team.
-void RelaxTT(MeshData<Real> *md, const RelaxationStep step) {
+void RelaxTT(MeshData<Real> *md, const RelaxationStep step, const bool last) {
   auto pm = md->GetParentPointer();
   static auto desc =
       MakePackDescriptor<fields::f_tt, fields::eq_fallback, fields::tt_round>(
@@ -48,7 +48,8 @@ void RelaxTT(MeshData<Real> *md, const RelaxationStep step) {
   const auto eq_params = pkg->Param<EquilibriumParams>("eq_params");
   const Real kb_per_m = pkg->Param<Species>("species").kb_per_m;
   const auto L = pkg->Param<TT::TTLayout>("tt_layout");
-  const auto prm = pkg->Param<TT::RoundParams>("tt_round");
+  auto prm = pkg->Param<TT::RoundParams>("tt_round");
+  if (last && pkg->Param<bool>("lomac")) prm.rank_max = L.rcap - 2;
   const auto sc = TT::MakeRelaxScratch(grid, L.rcap);
   const int nwork = sc.Size();
   const std::size_t scratch_bytes = parthenon::ScratchPad1D<Real>::shmem_size(nwork);
@@ -82,10 +83,10 @@ void RelaxTT(MeshData<Real> *md, const RelaxationStep step) {
 
 } // namespace
 
-TaskStatus Relax(MeshData<Real> *md, const RelaxationStep step) {
+TaskStatus Relax(MeshData<Real> *md, const RelaxationStep step, const bool last) {
   auto pm = md->GetParentPointer();
   if (GetRepresentation(pm->packages.Get(pkg_name).get()) == Representation::tt) {
-    RelaxTT(md, step);
+    RelaxTT(md, step, last);
     return TaskStatus::complete;
   }
   static auto desc =

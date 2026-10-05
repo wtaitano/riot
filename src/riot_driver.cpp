@@ -166,6 +166,11 @@ TaskListStatus RiotDriver::Step() {
     if (status != TaskListStatus::complete) return status;
   }
 
+  for (auto &fn : PostStepTasks) {
+    status = fn(pmesh, tm, integrator->dt).Execute();
+    if (status != TaskListStatus::complete) return status;
+  }
+
   status = RiotPostStepTasks().Execute();
 
   return status;
@@ -250,6 +255,8 @@ TaskCollection RiotDriver::RiotStepTasks() {
         closure_flx =
             tl.AddTask(hydro_flx | mix_flx | plasma_viscosity_flx,
                        Kinetics::AddClosureFluxes, mu0.get(), integrator->c[stage - 1]);
+        // kinetic walls: the hydro wall-face fluxes are the kinetic ones of the step
+        closure_flx = tl.AddTask(closure_flx, Kinetics::ApplyWallFluxes, mu0.get(), dt);
       }
 
       // send flux corrections

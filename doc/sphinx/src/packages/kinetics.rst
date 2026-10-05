@@ -123,9 +123,13 @@ Boundary Conditions
 -------------------
 
 Each face takes ``kinetics/<face>_bc``, which must be ``periodic`` exactly when the mesh
-face is periodic.
+face is periodic. With ``kinetics/closure_coupling`` on, hydro must see the same
+boundary: kinetic ``specular`` and ``diffuse`` walls need the mesh ``reflecting``
+(no-penetration) boundary on that face, and kinetic ``outflow`` needs mesh ``outflow``.
+The kinetic default follows the mesh face: ``periodic``, ``specular`` on a
+``reflecting`` face, ``outflow`` otherwise.
 
-* ``outflow``: zero gradient (default on non-periodic faces).
+* ``outflow``: zero gradient (default on outflow faces).
 * ``specular``: mirror reflection, which needs a velocity box symmetric about zero along
   the wall normal.
 * ``diffuse``: nodes entering the domain carry the discrete equilibrium at the wall
@@ -216,6 +220,18 @@ The package is enabled with ``kinetics = true`` in the ``<physics>`` block.
      - string
      - mesh-dependent
      - ``periodic``, ``outflow``, ``specular`` or ``diffuse``.
+   * - closure_coupling
+     - bool
+     - ``true``
+     - Hydro fluxes take the kinetic stress and heat flux (see `Closure coupling`_).
+   * - lomac
+     - bool
+     - ``false``
+     - Enslave the kinetic moments to hydro after every step (see `LoMaC`_).
+   * - lomac_skip_abort
+     - real
+     - ``1e-3``
+     - Abort if a larger fraction of cells skips the LoMaC correction.
 
 Tensor-train representation
 ---------------------------
@@ -410,12 +426,56 @@ coupling at :math:`\nu = 0`); in the continuum limit :math:`\Pi`, :math:`q` and 
 effect on hydro scale like :math:`1/\nu`; the TT closure at ``tt_eps = 1e-14`` matches
 the dense one.
 
+**Walls.** A kinetic ``specular`` or ``diffuse`` face needs the mesh ``reflecting``
+boundary. At such a face the hydro mass, momentum and energy fluxes are replaced by the
+kinetic ones: every semi-Lagrangian step of length :math:`h` adds :math:`h` times the
+upwind flux of :math:`(m, m\vec{v}, \tfrac12 m|\vec{v}|^2)` of :math:`f` through the wall
+(``kinetics.wall_flux``), and every RK stage uses the sum divided by :math:`\Delta t`.
+The hydro wall exchange over a step then equals the kinetic one (net mass flux zero,
+energy exchanged with diffuse walls). This is exact for linear interpolation only:
+coupled walls need ``sl_order = 1``. Interior faces keep the Riemann flux plus the
+closure. Check: ``tst/scripts/kinetics/walls.py`` (kinetic and hydro changes of mass,
+momentum and energy agree to roundoff, dense and TT, 1D and 2D).
+
 .. note::
 
    On a velocity grid with different spacings per axis the discrete equilibrium is
    slightly anisotropic (:math:`P_{xx} \ne p` at the :math:`10^{-3}` level for
    :math:`24\times 12\times 12` nodes on :math:`[-8, 8]^3`). The coupling passes this to
    hydro as a spurious stress; use equal spacings when the closure matters.
+
+LoMaC
+-----
+
+With ``lomac = true`` (needs ``closure_coupling = true``) the kinetic density, momentum
+and energy of every cell are set to the hydro ones after each step, so the kinetic
+solution inherits the conservation of the hydro solver. After the hydro step,
+
+.. math::
+
+     f \leftarrow f + M\,P, \qquad
+     P = c_0 + \vec{c}\cdot\vec{\xi} + c_4 |\vec{\xi}|^2, \qquad
+     \vec{\xi} = (\vec{v} - \vec{u})/\sqrt{k_B T/m},
+
+where :math:`M` is the sampled Maxwellian of the hydro :math:`(\rho, \vec{u}, T)` and
+the five coefficients solve a :math:`5\times 5` symmetric positive definite system
+assembled from the discrete moments of :math:`M` up to fourth order. The corrected
+moments match hydro to roundoff on any velocity grid. In TT form :math:`M P` has ranks
+:math:`(2, 2)` and is added without rounding; to keep the ranks within
+``tt_rank_max``, the last rounding of each kinetics step caps the ranks at
+``tt_rank_max - 2``. The closure seen by hydro over a step comes from :math:`f` before
+the correction; the next step starts from the corrected :math:`f`.
+
+The correction can make :math:`f` negative at some nodes; the history column
+``kinetics_lomac`` reports [cells skipped, cells made negative, TT cells skipped for
+rank capacity, cells], and ``kinetics_sums_6`` the negative mass. A cell is skipped when
+the hydro state has no positive density or temperature, or the :math:`5\times 5`
+system is singular.
+
+Checks (``tst/scripts/kinetics/lomac.py``): kinetic and hydro moments agree to roundoff
+at every step and in every cell (dense and TT, periodic and with walls); the LoMaC
+kinetic solution converges to the standalone kinetic solution with the mesh; the TT
+ranks stay within ``tt_rank_max``.
 
 Output
 ------

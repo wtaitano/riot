@@ -24,6 +24,7 @@ add_executable(
   test_reconstruction.cpp
   test_kinetics_bgk.cpp
   test_kinetics_equilibrium.cpp
+  test_kinetics_lomac.cpp
   test_kinetics_sl.cpp
   test_kinetics_tt.cpp
 )

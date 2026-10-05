@@ -65,6 +65,14 @@ VARIABLE_VECTOR(kinetics, tt_cross, false, 5);
 // heat flux q (x, y, z) from f at the start (old) and end (new) of the kinetics step.
 VARIABLE_VECTOR(kinetics, closure_old, false, 9);
 VARIABLE_VECTOR(kinetics, closure_new, false, 9);
+// closure_coupling with kinetic walls: time-integrated (m, m v, m |v|^2 / 2) flux of f
+// through each wall face over the kinetics step, stored in the ghost cell next to the
+// face (kinetics_walls.cpp).
+VARIABLE_VECTOR(kinetics, wall_flux, false, 5);
+// kinetics/lomac, per cell at the last correction: [status (0 applied, 1 skipped for
+// the target or the 5 x 5 solve, 2 skipped for TT rank capacity), 1 if the correction
+// made f negative somewhere].
+VARIABLE_VECTOR(kinetics, lomac_stat, false, 2);
 } // namespace fields
 
 // Particle physics constants of the single species, derived from the hydro material.
@@ -95,11 +103,36 @@ TaskStatus ComputeClosure(MeshData<Real> *md);
 TaskStatus ShiftClosure(MeshData<Real> *md);
 TaskStatus AddClosureFluxes(MeshData<Real> *md, const Real w);
 
+// Hydro wall fluxes enslaved to the kinetic walls (kinetics_walls.cpp). Param
+// "coupled_walls" flags the faces (ix1..ox3) that are kinetic walls with
+// closure_coupling. ResetWallFlux clears kinetics.wall_flux; AccumulateWallFlux adds h
+// times the flux of f in md through the wall faces normal to d (interp: dense f, sweep
+// the upwind cell along the directions before d first); ApplyWallFluxes sets the hydro
+// fluxes at the wall faces of md to wall_flux / dt.
+bool HasCoupledWalls(const StateDescriptor *pkg);
+TaskStatus ResetWallFlux(MeshData<Real> *md);
+void AccumulateWallFlux(MeshData<Real> *md, const int d, const Real h, const bool interp);
+TaskStatus ApplyWallFluxes(MeshData<Real> *md, const Real dt);
+
+// kinetics/lomac (kinetics_lomac.cpp): f <- f + M P after the hydro step, so the kinetic
+// moments equal the hydro ones (S3_DESIGN.md). Requires closure_coupling. LomacTasks is
+// a RiotDriver::PostStepTasks entry; HistoryLomacSums gives [skipped cells, cells made
+// negative, TT cells skipped for rank capacity, cells].
+inline bool Lomac(ParameterInput *pin) {
+  return pin->GetOrAddBoolean("physics", "kinetics", false) &&
+         pin->GetOrAddBoolean("kinetics", "lomac", false,
+                              "Enslave the kinetic moments to hydro after each step");
+}
+TaskCollection LomacTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt);
+std::vector<Real> HistoryLomacSums(MeshData<Real> *md);
+
 // Time integrator of streaming + collisions (kinetics_tasks.cpp).
 enum class Integrator { sl_dirk2, strang };
 
 // One BGK relaxation step of all interior cells (bgk.cpp).
-TaskStatus Relax(MeshData<Real> *md, const RelaxationStep step);
+// last: the last rounding of the kinetics step; with kinetics/lomac its rank cap is
+// tt_rank_max - 2, which leaves room for the rank-2 correction (S3-Q5).
+TaskStatus Relax(MeshData<Real> *md, const RelaxationStep step, const bool last);
 // Clear kinetics.eq_fallback (and kinetics.tt_round) (bgk.cpp); Relax only adds to them.
 TaskStatus ResetFallbackFlags(MeshData<Real> *md);
 // Abort if too many cells fell back to the sampled Maxwellian in the last relaxation.
@@ -107,8 +140,9 @@ TaskStatus CheckEquilibriumFallbacks(Mesh *pm);
 
 // One semi-Lagrangian streaming step of length h, dst <- SL(src) (semi_lagrangian.cpp).
 // tmp: scratch register of the multi-D tensor-train sweeps (unused otherwise).
+// last: as for Relax (applies to the last directional sweep).
 TaskStatus Stream(MeshData<Real> *src, MeshData<Real> *tmp, MeshData<Real> *dst,
-                  const Real h);
+                  const Real h, const bool last);
 // Largest substep allowed by kinetics/cfl over the whole mesh (MPI-reduced).
 Real MaxStreamingStep(Mesh *pm);
 

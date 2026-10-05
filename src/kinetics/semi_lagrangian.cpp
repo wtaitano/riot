@@ -32,7 +32,8 @@ namespace {
 // [kb, jb, ib], one cell per team (level-1 team scratch for the two roundings of
 // tt_stream.hpp). Rounding statistics are added for interior cells only.
 void SweepTT(MeshData<Real> *src, MeshData<Real> *dst, const int d, const Real h,
-             const IndexRange kb, const IndexRange jb, const IndexRange ib) {
+             const IndexRange kb, const IndexRange jb, const IndexRange ib,
+             const bool last) {
   auto pm = dst->GetParentPointer();
   static auto desc =
       MakePackDescriptor<fields::f_tt, fields::tt_round>(pm->resolved_packages.get());
@@ -44,7 +45,8 @@ void SweepTT(MeshData<Real> *src, MeshData<Real> *dst, const int d, const Real h
   const auto grid = pkg->Param<VelocityGrid>("grid");
   const int order = pkg->Param<SLParams>("sl_params").order;
   const auto L = pkg->Param<TT::TTLayout>("tt_layout");
-  const auto prm = pkg->Param<TT::RoundParams>("tt_round");
+  auto prm = pkg->Param<TT::RoundParams>("tt_round");
+  if (last && pkg->Param<bool>("lomac")) prm.rank_max = L.rcap - 2;
   const auto sc = TT::MakeStreamScratch(grid, L.rcap);
   const int nwork = sc.Size();
   const std::size_t scratch_bytes = parthenon::ScratchPad1D<Real>::shmem_size(nwork);
@@ -90,8 +92,8 @@ void SweepTT(MeshData<Real> *src, MeshData<Real> *dst, const int d, const Real h
 // In 3D the first sweep also writes one ghost layer of dst (k0, i.e. the base data),
 // which stays half swept until the next boundary exchange; nothing reads base ghosts in
 // between (outputs use the interior).
-void StreamTT(MeshData<Real> *src, MeshData<Real> *tmp, MeshData<Real> *dst,
-              const Real h) {
+void StreamTT(MeshData<Real> *src, MeshData<Real> *tmp, MeshData<Real> *dst, const Real h,
+              const bool last) {
   const int ndim = dst->GetParentPointer()->ndim;
   PARTHENON_REQUIRE(ndim == 1 || tmp != nullptr,
                     "kinetics: multi-D tensor-train streaming needs a scratch register");
@@ -115,7 +117,9 @@ void StreamTT(MeshData<Real> *src, MeshData<Real> *tmp, MeshData<Real> *dst,
       r[e].s -= 1;
       r[e].e += 1;
     }
-    SweepTT(reg[d][0], reg[d][1], d, h, r[2], r[1], r[0]);
+    // reg[d][0] is swept along the directions before d, with its ghosts along d.
+    AccumulateWallFlux(reg[d][0], d, h, false);
+    SweepTT(reg[d][0], reg[d][1], d, h, r[2], r[1], r[0], last && (d == ndim - 1));
   }
 }
 
@@ -127,10 +131,10 @@ void StreamTT(MeshData<Real> *src, MeshData<Real> *tmp, MeshData<Real> *dst,
 //! register used by the multi-D tensor-train sweeps (may be null otherwise). src must
 //! have valid ghost cells (one layer is enough under the |s| <= 1 cap).
 TaskStatus Stream(MeshData<Real> *src, MeshData<Real> *tmp, MeshData<Real> *dst,
-                  const Real h) {
+                  const Real h, const bool last) {
   auto pm = dst->GetParentPointer();
   if (GetRepresentation(pm->packages.Get(pkg_name).get()) == Representation::tt) {
-    StreamTT(src, tmp, dst, h);
+    StreamTT(src, tmp, dst, h, last);
     return TaskStatus::complete;
   }
   static auto desc = MakePackDescriptor<fields::f>(pm->resolved_packages.get());
@@ -142,6 +146,8 @@ TaskStatus Stream(MeshData<Real> *src, MeshData<Real> *tmp, MeshData<Real> *dst,
   const auto grid = pkg->Param<VelocityGrid>("grid");
   const auto sl = pkg->Param<SLParams>("sl_params");
   const int ndim = pm->ndim;
+  for (int d = 0; d < ndim; ++d)
+    AccumulateWallFlux(src, d, h, true);
 
   auto space = RiotFlatLoop::GetIndexSpace(IndexDomain::interior, vd.GetNBlocks(),
                                            grid.Size(), dst);

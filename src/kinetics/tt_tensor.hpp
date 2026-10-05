@@ -237,6 +237,7 @@ KOKKOS_INLINE_FUNCTION Real NormSlow(const TTRef<Data> &t) {
 struct RoundParams {
   Real eps = 1.0e-8;         // relative Frobenius tolerance; 0 = fixed rank (cap only)
   Real rank_floor = 1.0e-14; // tails below rank_floor ||f|| are always dropped
+  int rank_max = 0;          // rank cap below the layout capacity; 0 = capacity
 };
 
 struct RoundInfo {
@@ -575,7 +576,8 @@ KOKKOS_INLINE_FUNCTION RoundInfo Round(const RoundScratch &sc, Real *work,
   for (int i = 0; i < n0 * R1; ++i)
     norm2 += g1[i] * g1[i];
   info.norm = std::sqrt(norm2);
-  const int rmax = dst.L.rcap;
+  const int rmax =
+      (prm.rank_max > 0 && prm.rank_max < dst.L.rcap) ? prm.rank_max : dst.L.rcap;
   if (info.norm == 0.0) {
     dst.SetRanks(1, 1);
     for (int i = 0; i < n0; ++i)

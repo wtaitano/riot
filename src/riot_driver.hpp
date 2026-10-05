@@ -45,6 +45,8 @@ class RiotDriver : public EvolutionDriver {
   static std::vector<TaskCollectionFnPtr> OperatorSplitTasks;
   // Run before the unsplit hydro step (kinetics with closure coupling).
   static std::vector<TaskCollectionFnPtr> PreHydroTasks;
+  // Run after OperatorSplitTasks (kinetics/lomac).
+  static std::vector<TaskCollectionFnPtr> PostStepTasks;
   static void RegisterPgens();
 
  private:
