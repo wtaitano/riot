@@ -232,6 +232,11 @@ The package is enabled with ``kinetics = true`` in the ``<physics>`` block.
      - real
      - ``1e-3``
      - Abort if a larger fraction of cells skips the LoMaC correction.
+   * - amr_prolong
+     - string
+     - ``constant``
+     - Prolongation of :math:`f` on refined meshes: ``constant`` or ``linear`` (see
+       `Mesh refinement`_).
 
 Tensor-train representation
 ---------------------------
@@ -484,16 +489,22 @@ Mesh refinement
 ---------------
 
 Both representations run on statically refined meshes
-(``parthenon/mesh/refinement = static``, Cartesian coordinates). Fine ghost cells and
-new fine cells copy :math:`f` of the parent cell (piecewise-constant injection), and
-coarse ghost cells take the average of the children. All levels share one
+(``parthenon/mesh/refinement = static``, Cartesian coordinates). With
+``amr_prolong = constant`` (default) fine ghost cells and new fine cells copy :math:`f`
+of the parent cell (piecewise-constant injection, positive and exact in TT); with
+``amr_prolong = linear`` they take unlimited linear slopes from the neighboring coarse
+cells (second order, may make :math:`f` negative). Use
+``linear`` with ``sl_order = 2``: injection makes the interfaces first order (a warning
+is printed). Coarse ghost cells take the average of the children. All levels share one
 semi-Lagrangian substep, set by the finest cell width. Adaptive refinement and coupled
 kinetic walls on a refined mesh are not supported yet.
 
 With ``representation = tt`` the injection copies the cores, which is exact. The average
 of the :math:`2^d` children is formed as a TT and rounded after every addition (block
 sum of ranks :math:`\le 2\,r_{\max}`, ``tt_eps`` and ``tt_rank_max`` of the run), never
-as a dense array. Its rounding statistics are in the history columns
+as a dense array; the linear prolongation is the same kind of rounded sum,
+:math:`(1 - d/4) f_C + \tfrac14 \sum_d f_{C \pm e_d}` over the parent :math:`C` and its
+neighbors toward the child. Its rounding statistics are in the history columns
 ``kinetics_tt_amr_round_0..2`` (as ``kinetics_tt_round``).
 
 The semi-Lagrangian update is not in flux form, so the kinetic mass, momentum and energy
@@ -505,13 +516,14 @@ to the hydro ones every step.
 Check (``tst/scripts/kinetics/smr_interface.py``): an entropy wave streams freely across
 two fine-coarse interfaces of a periodic 1D mesh. The density error converges at first
 order (measured 0.92, 0.96 for ``sl_order = 1``) and stays below the uniform
-root-level error; the kinetic mass error at the interfaces decreases like the cell width;
+root-level error; with ``amr_prolong = linear`` and ``sl_order = 2`` at second order
+(measured 2.01); the kinetic mass error at the interfaces decreases like the cell width;
 with coupling, hydro mass and energy are conserved to roundoff, and with LoMaC the
 kinetic sums equal the hydro sums to roundoff.
 ``tst/scripts/kinetics/tt_smr.py``: on two-level meshes the TT run at
 ``tt_eps = 1e-14`` matches the dense run to 1e-10 (measured 1e-11 to 1e-12; 1D free
 streaming, coupled Sod, coupled Sod with LoMaC, and a coupled 2D blast with a refined
-central patch), without rank-cap hits; in 2D the hydro mass and energy stay conserved to
+central patch, with constant and with linear prolongation), without rank-cap hits; in 2D the hydro mass and energy stay conserved to
 roundoff.
 
 Output

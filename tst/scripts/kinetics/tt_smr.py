@@ -21,7 +21,10 @@
 #   sod_lomac same with kinetics/lomac
 # and 2D: blast2d deck, 16^2 cells, central quarter refined, Nv 12^3, coupled (fine
 # blocks with coarse face and corner neighbors; also hydro mass and energy conserved to
-# 1e-12, measured 8e-16 / 7e-15).
+# 1e-12, measured 8e-16 / 7e-15); blast2d_linear: the same with kinetics/amr_prolong =
+# linear and sl_order = 2 (unlimited): fine ghosts reconstructed from the coarse buffer
+# with slopes, coarse ghosts next to same-level neighbors restricted (measured 1.3e-12;
+# 3.8e-4 without that restriction).
 # Pass, per case: every derived moment field of every dump within tol = 1e-10 of the
 # dense run on the same mesh (tt_eps = 1e-14; measured 1e-11 to 1e-12); history mass and
 # energy within tol; no rank-cap hits or failed SVDs in streaming, relaxation or
@@ -116,6 +119,15 @@ cases = {
     "sod": ("kinetics/sod", sod),
     "sod_lomac": ("kinetics/sod", sod + ["kinetics/lomac=true"]),
     "blast2d": ("kinetics/blast2d", blast2d),
+    "blast2d_linear": (
+        "kinetics/blast2d",
+        blast2d
+        + [
+            "kinetics/amr_prolong=linear",
+            "kinetics/sl_order=2",
+            "kinetics/sl_limiter=none",
+        ],
+    ),
 }
 
 

@@ -154,6 +154,11 @@ Real MaxStreamingStep(Mesh *pm);
 // or a single-level mesh). AddFExchangeTasks: RestrictTT when needed, then the ghost
 // exchange of the f register md. ExchangeFGhosts: the same, executed now on base.
 TaskStatus RestrictTT(MeshData<Real> *md);
+// amr_prolong = linear, tt: coarse ghosts next to non-coarser neighbors <- restriction of
+// the received fine ghosts (RestrictGhostsTT); fine ghosts next to coarser neighbors <-
+// linear reconstruction from the coarse buffer (ProlongateTT). Inside the exchange.
+TaskStatus RestrictGhostsTT(MeshData<Real> *md);
+TaskStatus ProlongateTT(MeshData<Real> *md);
 TaskID AddFExchangeTasks(TaskID dependency, TaskList &tl,
                          std::shared_ptr<MeshData<Real>> &md);
 void ExchangeFGhosts(Mesh *pm);

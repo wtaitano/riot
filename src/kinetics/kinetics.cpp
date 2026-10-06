@@ -55,9 +55,10 @@ Species GasFromMaterial(ParameterInput *pin) {
   return s;
 }
 
-// Restriction operator that does nothing: Parthenon must not average tensor-train slots
-// (kinetics_amr.cpp fills the coarse buffer instead).
-struct RestrictNone {
+// Refinement operator that does nothing: Parthenon must not combine tensor-train slots
+// (kinetics_amr.cpp fills the coarse buffer and, for linear prolongation, the fine
+// ghosts instead).
+struct RefinementNoOp {
   static constexpr bool OperationRequired(parthenon::TopologicalElement,
                                           parthenon::TopologicalElement) {
     return false;
@@ -163,6 +164,11 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   const std::string refinement =
       pin->GetOrAddString("parthenon/mesh", "refinement", "none");
   const bool multilevel = (refinement != "none");
+  const std::string amr_prolong = pin->GetOrAddString(
+      input_block, "amr_prolong", "constant", {"constant", "linear"},
+      "Prolongation of f to fine ghosts and new fine cells: copy of the parent "
+      "(constant) or unlimited linear slopes (linear)");
+  params.Add("amr_prolong", amr_prolong);
   PARTHENON_REQUIRE(!multilevel || parthenon::IsCoord<parthenon::UniformCartesian>(),
                     "kinetics: mesh refinement needs Cartesian coordinates");
 
@@ -230,6 +236,10 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
       "Clip interpolated values to the bracketing cells (minmax) or not (none)");
   sl.limiter = (limiter == "minmax") && (sl.order == 2); // linear SL is monotone
   params.Add("sl_params", sl);
+  if (multilevel && sl.order == 2 && amr_prolong == "constant" && Globals::my_rank == 0)
+    std::cout << "kinetics: WARNING: sl_order = 2 with amr_prolong = constant is first "
+                 "order at fine-coarse interfaces; use amr_prolong = linear"
+              << std::endl;
   const Real cfl = pin->GetOrAddReal(input_block, "cfl", 1.0,
                                      "Max cells moved per kinetic substep (<= 1)");
   PARTHENON_REQUIRE(cfl > 0.0 && cfl <= 1.0, "kinetics: cfl must be in (0, 1]");
@@ -311,8 +321,12 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   // restriction is RestrictTT (kinetics_amr.cpp).
   {
     using namespace parthenon::refinement_ops;
-    if (tt) {
-      mf.RegisterRefinementOps<ProlongatePiecewiseConstant, RestrictNone>();
+    if (tt && amr_prolong == "linear") {
+      mf.RegisterRefinementOps<RefinementNoOp, RefinementNoOp>();
+    } else if (tt) {
+      mf.RegisterRefinementOps<ProlongatePiecewiseConstant, RefinementNoOp>();
+    } else if (amr_prolong == "linear") {
+      mf.RegisterRefinementOps<ProlongateSharedLinear, RestrictAverage>();
     } else {
       mf.RegisterRefinementOps<ProlongatePiecewiseConstant, RestrictAverage>();
     }

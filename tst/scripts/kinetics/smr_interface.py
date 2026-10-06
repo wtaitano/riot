@@ -19,6 +19,8 @@
 #   * observed order of the SMR L1 density error against the exact discrete-velocity
 #     solution >= 0.9 (nx = 64, 128, 256, sl_order = 1; measured 0.92, 0.96), and the SMR
 #     error below the uniform root-level error at every nx;
+#   * with kinetics/amr_prolong = linear and sl_order = 2 (unlimited) the order is >= 1.8
+#     (measured 2.01, 2.01; injection gives 1.1);
 #   * the kinetic mass leak at the fine-coarse faces (S4-Q10: semi-Lagrangian is not
 #     flux-corrected) is O(dx): it decreases with nx at a rate >= 0.9 (measured 0.97, 0.98);
 #   * coupled run (nu = 10, closure_coupling) on the SMR mesh: hydro mass and energy
@@ -47,6 +49,7 @@ resolutions = [64, 128, 256]
 nv = (16, 8, 8)
 vbox = 6.0
 min_order = 0.9
+min_order_linear = 1.8
 smr = [
     "parthenon/mesh/refinement=static",
     "parthenon/mesh/numlevel=2",
@@ -58,21 +61,30 @@ common = [
     f"kinetics/nv1={nv[0]}",
     f"kinetics/nv2={nv[1]}",
     f"kinetics/nv3={nv[2]}",
-    "kinetics/sl_order=1",
 ]
 coupled = ["kinetics/nu0=10.0", "kinetics/closure_coupling=true"]
+first = ["kinetics/sl_order=1"]
 
 
 def pid(kind, nx=None):
     return f"kinetics_smr_{kind}" + ("" if nx is None else f"_n{nx}")
 
 
+linear = [
+    "kinetics/closure_coupling=false",
+    "kinetics/sl_order=2",
+    "kinetics/sl_limiter=none",
+    "kinetics/amr_prolong=linear",
+]
+
+
 def cases():
     for nx in resolutions:
-        yield pid("smr", nx), nx, smr + ["kinetics/closure_coupling=false"]
-        yield pid("root", nx), nx, ["kinetics/closure_coupling=false"]
-    yield pid("coupled"), 64, smr + coupled
-    yield pid("lomac"), 64, smr + coupled + ["kinetics/lomac=true"]
+        yield pid("smr", nx), nx, smr + first + ["kinetics/closure_coupling=false"]
+        yield pid("root", nx), nx, first + ["kinetics/closure_coupling=false"]
+        yield pid("linear", nx), nx, smr + linear
+    yield pid("coupled"), 64, smr + first + coupled
+    yield pid("lomac"), 64, smr + first + coupled + ["kinetics/lomac=true"]
 
 
 def run(**kwargs):
@@ -160,6 +172,13 @@ def analyze():
     logger.debug(f"kinetic mass leak {leak}, rates {leak_rates}")
     if min(leak_rates) < min_order:
         logger.warning(f"kinetic mass leak {leak} is not O(dx): rates {leak_rates}")
+        ok = False
+
+    err_lin = [density_error(pid("linear", nx)) for nx in resolutions]
+    rates_lin = [np.log2(err_lin[i] / err_lin[i + 1]) for i in range(len(err_lin) - 1)]
+    logger.debug(f"linear prolongation, sl_order 2: L1 {err_lin}, orders {rates_lin}")
+    if min(rates_lin) < min_order_linear:
+        logger.warning(f"linear prolongation orders {rates_lin} < {min_order_linear}")
         ok = False
 
     h, c = read_history(pid("coupled"))
