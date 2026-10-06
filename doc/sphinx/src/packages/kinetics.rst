@@ -237,6 +237,10 @@ The package is enabled with ``kinetics = true`` in the ``<physics>`` block.
      - ``constant``
      - Prolongation of :math:`f` on refined meshes: ``constant`` or ``linear`` (see
        `Mesh refinement`_).
+   * - amr_noneq_refine, amr_noneq_derefine
+     - real
+     - ``1e-2``, ``1e-3``
+     - Adaptive refinement: thresholds of :math:`\|f - M[f]\| / \|f\|`.
 
 Tensor-train representation
 ---------------------------
@@ -423,8 +427,8 @@ The kinetics step runs before the hydro step. The closure is evaluated from :mat
 at :math:`t^n` and :math:`t^{n+1}` on the entire block (ghost cells follow the kinetic
 boundary conditions), and RK stage :math:`s` uses
 :math:`(1-c_s)\,\Pi^n + c_s\,\Pi^{n+1}`, so the coupling is second order in time.
-Cartesian coordinates only; static mesh refinement is supported (see
-:ref:`kinetics-mesh-refinement`), adaptive refinement is not yet.
+Cartesian coordinates only; static and adaptive mesh refinement are supported (see
+:ref:`kinetics-mesh-refinement`).
 
 Checks (``tst/scripts/kinetics/closure_coupling.py``): the gap between the hydro and the
 kinetic density, velocity and temperature shrinks with the mesh (it does not without the
@@ -496,8 +500,8 @@ of the parent cell (piecewise-constant injection, positive and exact in TT); wit
 cells (second order, may make :math:`f` negative). Use
 ``linear`` with ``sl_order = 2``: injection makes the interfaces first order (a warning
 is printed). Coarse ghost cells take the average of the children. All levels share one
-semi-Lagrangian substep, set by the finest cell width. Adaptive refinement and coupled
-kinetic walls on a refined mesh are not supported yet.
+semi-Lagrangian substep, set by the finest cell width. Coupled kinetic walls on a
+refined mesh are not supported yet.
 
 With ``representation = tt`` the injection copies the cores, which is exact. The average
 of the :math:`2^d` children is formed as a TT and rounded after every addition (block
@@ -525,6 +529,29 @@ kinetic sums equal the hydro sums to roundoff.
 streaming, coupled Sod, coupled Sod with LoMaC, and a coupled 2D blast with a refined
 central patch, with constant and with linear prolongation), without rank-cap hits; in 2D the hydro mass and energy stay conserved to
 roundoff.
+
+**Adaptive refinement** (``parthenon/mesh/refinement = adaptive``). Blocks are tagged
+by every criterion in the input (Parthenon refines if any asks, derefines only if all
+agree). Kinetics adds a non-equilibrium criterion: a block refines where
+:math:`\|f - M[f]\|_2 / \|f\|_2` exceeds ``amr_noneq_refine`` (default ``1e-2``) and may
+derefine where it stays below ``amr_noneq_derefine`` (default ``1e-3``), with :math:`M`
+the discrete equilibrium of the cell (for TT the norms are exact core contractions,
+roundoff about ``1e-8``). Hydro criteria come from Parthenon's
+``<parthenon/refinement0>`` blocks, e.g. ``method = derivative_order_1``,
+``field = c.c.bulk.rho``. For a TT :math:`f` the coarse buffers of the blocks that may
+derefine are restricted before the remesh. After a remesh new fine blocks with
+``amr_prolong = linear`` get the linear reconstruction, the closure is recomputed from
+:math:`f` and, with ``lomac = true``, :math:`f` is enslaved to the remeshed hydro state
+(the newly prolongated hydro and kinetic moments differ otherwise). The history adds
+``kinetics_noneq_max`` and ``kinetics_blocks_per_level_*``. Restarts of adaptive runs are
+not tested.
+
+Check (``tst/scripts/kinetics/tt_amr.py``): an entropy wave streams through a periodic
+two-level mesh that refines and derefines with it; the TT run at ``tt_eps = 1e-14``
+follows the dense run block for block to ``1e-10`` (measured ``4e-12`` to ``2e-11``;
+constant and linear prolongation, coupled, LoMaC) without rank-cap hits, hydro is
+conserved to roundoff, LoMaC keeps the kinetic sums equal to the hydro sums; the
+kinetic criterion alone refines a Sod shock.
 
 Output
 ------
