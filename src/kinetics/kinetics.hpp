@@ -61,6 +61,8 @@ VARIABLE_VECTOR(kinetics, tt_round, false, 3);
 // representation = tt on a multilevel mesh, per cell over the last hydro step: the same
 // statistics for the roundings of the restriction to the coarse buffer (kinetics_amr).
 VARIABLE_VECTOR(kinetics, tt_amr_round, false, 3);
+// Adaptive refinement: ||f - M[f]|| / ||f|| per cell at the last tagging (kinetics_amr).
+VARIABLE_SCALAR(kinetics, noneq, false);
 // representation = tt, tt_diag = cross, per cell at the last history output: cross
 // entropy integrand sum, phi evaluations, max(q1, q2), rank-cap hit, not converged.
 VARIABLE_VECTOR(kinetics, tt_cross, false, 5);
@@ -161,7 +163,17 @@ TaskStatus RestrictGhostsTT(MeshData<Real> *md);
 TaskStatus ProlongateTT(MeshData<Real> *md);
 TaskID AddFExchangeTasks(TaskID dependency, TaskList &tl,
                          std::shared_ptr<MeshData<Real>> &md);
-void ExchangeFGhosts(Mesh *pm);
+void ExchangeFGhosts(Mesh *pm, const bool dense_too = false);
+// Adaptive refinement (kinetics_amr.cpp). ComputeNonEquilibrium: kinetics.noneq of the
+// interior. CheckRefinement: the kinetic criterion (CheckRefinementMesh).
+// RestrictForRemesh: TT coarse buffers of the blocks that may derefine, after tagging
+// and before Parthenon's remesh (driver). AfterRemesh: if the mesh changed since the
+// last call, new fine blocks (linear TT), LoMaC, ghosts and closure (driver, before the
+// global time step).
+TaskStatus ComputeNonEquilibrium(MeshData<Real> *md);
+void CheckRefinement(MeshData<Real> *md, parthenon::ParArray1D<AmrTag> &amr_tags);
+void RestrictForRemesh(Mesh *pm);
+void AfterRemesh(Mesh *pm, parthenon::SimTime &tm);
 
 // Velocity-space representation of f.
 enum class Representation { dense, tt };
@@ -207,6 +219,10 @@ Real HistoryMaxRank(MeshData<Real> *md);
 std::vector<Real> HistoryRoundSums(MeshData<Real> *md);
 // representation = tt, multilevel mesh: kinetics.tt_amr_round summed over interior cells.
 std::vector<Real> HistoryAmrRoundSums(MeshData<Real> *md);
+// Adaptive refinement: largest kinetics.noneq (recomputed), and the number of blocks per
+// level (relative to the root, 0 .. numlevel - 1).
+Real HistoryNoneqMax(MeshData<Real> *md);
+std::vector<Real> HistoryBlocksPerLevel(MeshData<Real> *md);
 // tt_diag = cross: kinetics.tt_cross columns 1-4 summed over the interior cells (filled
 // by HistorySums, which is enrolled before it).
 std::vector<Real> HistoryCrossSums(MeshData<Real> *md);

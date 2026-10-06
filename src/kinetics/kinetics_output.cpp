@@ -428,4 +428,40 @@ Real HistorySubsteps(MeshData<Real> *md) {
   return md->GetParentPointer()->packages.Get(pkg_name)->Param<int>("substeps");
 }
 
+//----------------------------------------------------------------------------------------
+//! \fn  Real Kinetics::HistoryNoneqMax
+//! \brief Adaptive refinement: largest ||f - M[f]|| / ||f|| over the interior cells.
+Real HistoryNoneqMax(MeshData<Real> *md) {
+  auto pm = md->GetParentPointer();
+  ComputeNonEquilibrium(md);
+  static auto desc = MakePackDescriptor<fields::noneq>(pm->resolved_packages.get());
+  auto v = desc.GetPack(md);
+  if (v.GetNBlocks() == 0) return 0.0;
+  using rt = RiotFlatReduce::ReductionType<Kokkos::Max<Real>>;
+  auto space = rt::GetIndexSpace(IndexDomain::interior, v.GetNBlocks(), md);
+  return rt::four_d(
+      "Kinetics::HistoryNoneqMax", space,
+      KOKKOS_LAMBDA(const int b, const int k, const int j, const int i, Real &lmax) {
+        lmax = std::max(lmax, v(b, fields::noneq(), k, j, i));
+      });
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  std::vector<Real> Kinetics::HistoryBlocksPerLevel
+//! \brief Multilevel mesh: blocks per refinement level, from the root level up to
+//! parthenon/mesh/numlevel - 1 (adaptive) or the finest static level.
+std::vector<Real> HistoryBlocksPerLevel(MeshData<Real> *md) {
+  auto pm = md->GetParentPointer();
+  // Static refinement leaves Parthenon's max level at 63: use the levels in use.
+  const int top = pm->adaptive ? pm->GetMaxLevel() : pm->GetCurrentLevel();
+  const int nlevel = top - pm->GetRootLevel() + 1;
+  std::vector<Real> counts(nlevel, 0.0);
+  for (int b = 0; b < md->NumBlocks(); ++b) {
+    const int l =
+        md->GetBlockData(b)->GetBlockPointer()->loc.level() - pm->GetRootLevel();
+    if (l >= 0 && l < nlevel) counts[l] += 1.0;
+  }
+  return counts;
+}
+
 } // namespace Kinetics

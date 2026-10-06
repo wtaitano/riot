@@ -25,6 +25,9 @@
 //     tolerance rank is reported as a cap hit.
 //   * A + A (rank 2r block form) rounds back to rank r with value 2A (eps = 0, the
 //     fixed-rank mode), and alpha A + beta B combines exactly.
+//   * Dot (Frobenius inner product by core contraction) equals the dense sum of
+//     products for two TTs of different ranks, and against a rank-1 TT stored with a
+//     different capacity.
 //   * T2: moments by core contraction (tt_moments.hpp) equal the dense node sums of the
 //     decompressed tensor (raw and central, incl. heat flux), and the decompression
 //     ForEachNode equals entrywise evaluation, for a generic rank-(3, 4) TT and for a
@@ -389,6 +392,55 @@ TEST_CASE("T1: sums of tensor trains round back to the exact rank",
   CHECK(h[3] <= r + 1);
   CHECK(h[4] <= r + 2);
   CHECK(h[5] < 1.0e-13);
+}
+
+TEST_CASE("T1: TT inner product equals the dense sum of products", "[kinetics][tt][T1]") {
+  const auto grid = Grid(12, 10, 8);
+  const int r = 4;
+  const T::TTLayout L = T::MakeLayout(grid, r);
+  const T::TTLayout L1 = T::MakeLayout(grid, 1); // capacity 1, as for an equilibrium
+  View a("a", L.Size()), b("b", L.Size()), m("m", L1.Size());
+  View work("work", T::DotWorkSize(L, L));
+  View out("out", 6); // [<A, B> TT, dense, <A, A> TT, dense, <A, M> TT, dense]
+  Kokkos::parallel_for(
+      "dot", 1, KOKKOS_LAMBDA(const int) {
+        const auto A = T::MakeRef(T::PtrData{a.data()}, L);
+        const auto B = T::MakeRef(T::PtrData{b.data()}, L);
+        // Different ranks on the two sides: (4, 3) and (2, 4).
+        A.SetRanks(4, 3);
+        B.SetRanks(2, 4);
+        int h = 0;
+        for (int x = 0; x < L.Size() - 2; ++x) {
+          a.data()[2 + x] = Hash(h++);
+          b.data()[2 + x] = Hash(h++);
+        }
+        // Rank-1 M in a layout of different capacity.
+        const auto M = T::MakeRef(T::PtrData{m.data()}, L1);
+        M.SetRanks(1, 1);
+        for (int x = 0; x < L1.Size() - 2; ++x)
+          m.data()[2 + x] = 1.0 + 0.5 * Hash(h++);
+        Real ab = 0.0, aa = 0.0, am = 0.0;
+        for (int k = 0; k < grid.nv[2]; ++k)
+          for (int j = 0; j < grid.nv[1]; ++j)
+            for (int i = 0; i < grid.nv[0]; ++i) {
+              ab += A(i, j, k) * B(i, j, k);
+              aa += A(i, j, k) * A(i, j, k);
+              am += A(i, j, k) * M(i, j, k);
+            }
+        out(0) = T::Dot(A, B, work.data());
+        out(1) = ab;
+        out(2) = T::Dot(A, A, work.data());
+        out(3) = aa;
+        out(4) = T::Dot(A, M, work.data());
+        out(5) = am;
+      });
+  const auto h = ToHost(out);
+  // Random cores nearly cancel in <A, B>, so compare on the scale of ||A||^2.
+  CHECK(std::abs(h[0] - h[1]) < 1.0e-13 * h[3]);
+  CHECK(h[2] == Catch::Approx(h[3]).epsilon(1.0e-13));
+  CHECK(std::abs(h[1]) > 1.0e-5 * h[3]); // a nontrivial product
+  // Cauchy-Schwarz scale: |<A, M>| <= ||A|| ||M||, with ||M|| ~ sqrt(n0 n1 n2).
+  CHECK(std::abs(h[4] - h[5]) < 1.0e-13 * std::sqrt(h[3] * 12 * 10 * 8) * 2.0);
 }
 
 TEST_CASE("T2: TT moments equal dense moments of the decompressed tensor",

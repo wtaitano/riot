@@ -91,8 +91,9 @@ RiotDriver::RiotDriver(ParameterInput *pin, ApplicationInput *app_in, Mesh *pm)
   do_gravity = riot_pkg->Param<bool>("do_gravity");
   do_ionization = riot_pkg->Param<bool>("do_ionization");
   curvilinear = riot_pkg->Param<bool>("curvilinear");
-  kinetic_closure = riot_pkg->Param<bool>("do_kinetics") &&
-                    pm->packages.Get("kinetics")->Param<bool>("closure_coupling");
+  do_kinetics = riot_pkg->Param<bool>("do_kinetics");
+  kinetic_closure =
+      do_kinetics && pm->packages.Get("kinetics")->Param<bool>("closure_coupling");
 
   // enable FPE trapping
   const bool trap_fpes = riot_pkg->Param<bool>("trap_fpes");
@@ -172,8 +173,22 @@ TaskListStatus RiotDriver::Step() {
   }
 
   status = RiotPostStepTasks().Execute();
+  if (status != TaskListStatus::complete) return status;
+  // Tensor-train f: coarse buffers of the blocks that may derefine in the remesh that
+  // follows this step (Parthenon's own restriction is a no-op for it).
+  if (do_kinetics) Kinetics::RestrictForRemesh(pmesh);
 
   return status;
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  void RiotDriver::SetGlobalTimeStep
+//! \brief Kinetics work on a changed mesh (Kinetics::AfterRemesh), then Parthenon's
+//! global time step. Parthenon calls this once before the loop and after every remesh /
+//! load-balancing pass.
+void RiotDriver::SetGlobalTimeStep() {
+  if (do_kinetics) Kinetics::AfterRemesh(pmesh, tm);
+  EvolutionDriver::SetGlobalTimeStep();
 }
 
 //----------------------------------------------------------------------------------------

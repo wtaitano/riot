@@ -221,6 +221,51 @@ KOKKOS_INLINE_FUNCTION void ForEachNode(const TTRef<Data> &t, const Func &func) 
     }
 }
 
+// Frobenius inner product <A, B> = sum_{ijk} A(i, j, k) B(i, j, k) by core contraction,
+// O(n r^3): X(a, b) = sum_i A1(i, a) B1(i, b); W(a, j, d) = sum_b X(a, b) B2(b, j, d);
+// Y(c, d) = sum_{a, j} A2(a, j, c) W(a, j, d); then the last core. work holds
+// DotWorkSize(A.L, B.L) reals.
+KOKKOS_INLINE_FUNCTION int DotWorkSize(const TTLayout &LA, const TTLayout &LB) {
+  return 2 * LA.rcap * LB.rcap + LA.rcap * LA.n[1] * LB.rcap;
+}
+template <class DA, class DB>
+KOKKOS_INLINE_FUNCTION Real Dot(const TTRef<DA> &A, const TTRef<DB> &B, Real *work) {
+  const int a1 = A.R1(), a2 = A.R2(), b1 = B.R1(), b2 = B.R2();
+  const int n1 = A.L.n[1];
+  Real *X = work;
+  Real *Y = X + A.L.rcap * B.L.rcap;
+  Real *W = Y + A.L.rcap * B.L.rcap;
+  for (int a = 0; a < a1; ++a)
+    for (int b = 0; b < b1; ++b) {
+      Real x = 0.0;
+      for (int i = 0; i < A.L.n[0]; ++i)
+        x += A.G1(i, a) * B.G1(i, b);
+      X[a + a1 * b] = x;
+    }
+  for (int d = 0; d < b2; ++d)
+    for (int j = 0; j < n1; ++j)
+      for (int a = 0; a < a1; ++a) {
+        Real w = 0.0;
+        for (int b = 0; b < b1; ++b)
+          w += X[a + a1 * b] * B.G2(b, j, d);
+        W[a + a1 * (j + n1 * d)] = w;
+      }
+  for (int c = 0; c < a2; ++c)
+    for (int d = 0; d < b2; ++d) {
+      Real y = 0.0;
+      for (int j = 0; j < n1; ++j)
+        for (int a = 0; a < a1; ++a)
+          y += A.G2(a, j, c) * W[a + a1 * (j + n1 * d)];
+      Y[c + a2 * d] = y;
+    }
+  Real sum = 0.0;
+  for (int k = 0; k < A.L.n[2]; ++k)
+    for (int c = 0; c < a2; ++c)
+      for (int d = 0; d < b2; ++d)
+        sum += A.G3(c, k) * Y[c + a2 * d] * B.G3(d, k);
+  return sum;
+}
+
 // Frobenius norm by full contraction, O(n^3 r^2). For tests and diagnostics only.
 template <class Data>
 KOKKOS_INLINE_FUNCTION Real NormSlow(const TTRef<Data> &t) {

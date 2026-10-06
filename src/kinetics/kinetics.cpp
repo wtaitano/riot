@@ -154,10 +154,6 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
     params.Add("tt_cross", cross);
     params.Add("tt_cross_delta", cross_delta);
     params.Add("tt_diag", diag);
-    PARTHENON_REQUIRE(pin->GetOrAddString("parthenon/mesh", "refinement", "none") !=
-                          "adaptive",
-                      "kinetics: representation = tt does not support adaptive "
-                      "refinement");
   }
 
   // Mesh refinement (S4_DESIGN.md)
@@ -169,6 +165,23 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
       "Prolongation of f to fine ghosts and new fine cells: copy of the parent "
       "(constant) or unlimited linear slopes (linear)");
   params.Add("amr_prolong", amr_prolong);
+  // Adaptive refinement: kinetic criterion and remesh bookkeeping (kinetics_amr.cpp).
+  const bool adaptive = (refinement == "adaptive");
+  params.Add("amr_noneq_refine",
+             pin->GetOrAddReal(input_block, "amr_noneq_refine", 1.0e-2,
+                               "Refine a block where ||f - M[f]|| / ||f|| exceeds this"));
+  params.Add("amr_noneq_derefine",
+             pin->GetOrAddReal(input_block, "amr_noneq_derefine", 1.0e-3,
+                               "Derefine a block where ||f - M[f]|| / ||f|| is below "
+                               "this everywhere"));
+  PARTHENON_REQUIRE(params.Get<Real>("amr_noneq_derefine") <=
+                        params.Get<Real>("amr_noneq_refine"),
+                    "kinetics: amr_noneq_derefine must not exceed amr_noneq_refine");
+  params.Add("amr_derefine_count",
+             pin->GetOrAddInteger("parthenon/mesh", "derefine_count", 10));
+  params.Add("amr_started", false, Params::Mutability::Mutable);
+  params.Add("amr_locs", std::vector<parthenon::LogicalLocation>{},
+             Params::Mutability::Mutable);
   PARTHENON_REQUIRE(!multilevel || parthenon::IsCoord<parthenon::UniformCartesian>(),
                     "kinetics: mesh refinement needs Cartesian coordinates");
 
@@ -268,9 +281,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   if (closure) {
     PARTHENON_REQUIRE(parthenon::IsCoord<parthenon::UniformCartesian>(),
                       "kinetics: closure_coupling needs Cartesian coordinates");
-    // closure_old carries over from the previous step and is not remeshed.
-    PARTHENON_REQUIRE(refinement != "adaptive",
-                      "kinetics: closure_coupling does not support adaptive refinement");
+    // closure_old carries over from the previous step; it is recomputed from f after a
+    // remesh (AfterRemesh).
   }
   // LoMaC: kinetic moments enslaved to hydro (S3_DESIGN.md, S3-Q8/Q16)
   const bool lomac = Lomac(pin);
@@ -352,6 +364,10 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
                MetadataOperatorSplit},
               std::vector<int>({6}));
   pkg->AddField<fields::stress>(m6);
+  if (adaptive) {
+    pkg->AddField<fields::noneq>(ms);
+    pkg->CheckRefinementMesh = CheckRefinement;
+  }
   if (closure) {
     // No OperatorSplit flag: the hydro stage registers (u0, u1) read the closure.
     // OneCopy, so they share base's memory.
@@ -415,6 +431,9 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   if (lomac)
     hst_vecs.emplace_back(parthenon::HistoryOutputVec(
         UserHistoryOperation::sum, HistoryLomacSums, "kinetics_lomac"));
+  if (multilevel)
+    hst_vecs.emplace_back(parthenon::HistoryOutputVec(
+        UserHistoryOperation::sum, HistoryBlocksPerLevel, "kinetics_blocks_per_level"));
   pkg->AddParam<>(parthenon::hist_vec_param_key, hst_vecs);
   parthenon::HstVar_list hst_vars = {};
   hst_vars.emplace_back(parthenon::HistoryOutputVar(UserHistoryOperation::min,
@@ -427,6 +446,9 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
     hst_vars.emplace_back(parthenon::HistoryOutputVar(
         UserHistoryOperation::max, HistoryMaxRank, "kinetics_tt_max_rank"));
   }
+  if (adaptive)
+    hst_vars.emplace_back(parthenon::HistoryOutputVar(
+        UserHistoryOperation::max, HistoryNoneqMax, "kinetics_noneq_max"));
   pkg->AddParam<>(parthenon::hist_param_key, hst_vars);
 
   if (Globals::my_rank == 0) {
