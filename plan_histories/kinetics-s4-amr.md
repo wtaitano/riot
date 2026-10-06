@@ -12,9 +12,9 @@ with closure coupling and LoMaC.
 
 Scope: steps 1-8 of the S4 plan on `taitano/vlasov`, on top of S3 (`f75c1de`, after the
 rebase). Steps 1-4 are committed: `720cb33` (dense SMR), `ea86f04` (TT SMR), `b54b4af`
-(2D SMR regression), `040a22e` (linear-slope prolongation). Steps 5-8 (AMR remesh,
-MPI/restart, Sod AMR, 2D blast showcase, docs) are in the working tree and go into the
-next commits. The design, decision log and implementation log are in
+(2D SMR regression), `040a22e` (linear-slope prolongation), `80a6a57` (AMR remesh),
+`f49c04d` (MPI/restart, Sod AMR and 2D blast regressions), and the commit adding this
+file (docs). The design, decision log and implementation log are in
 `claude_sessions/kinetic_bgk/S4_DESIGN.md`; decision numbers S4-Qn below refer to it.
 The measured numbers come from its implementation log (steps 1-5) and from
 `claude_sessions/kinetic_bgk/s4/RESULTS.md` (all steps, including 6-8).
@@ -234,7 +234,7 @@ bitwise identical in all dumps.
   findings were fixed before the commit (history columns on static meshes, a failed
   post-step guard, threshold validation, an O(n r^3) `TT::Dot`, no LoMaC re-run on a
   load-balance-only remesh). Nothing was run on a GPU.
-- Nothing from S4 is pushed (the branch is 4 commits ahead of the fork at `f75c1de`).
+- Nothing from S4 is pushed (the branch is 7 commits ahead of the fork at `f75c1de`).
 
 ## Known limitations and open items
 
