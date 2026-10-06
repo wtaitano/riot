@@ -13,16 +13,19 @@
 # This file was made in part with generative AI.
 
 # Tensor-train f on statically refined meshes (claude_sessions/kinetic_bgk/
-# S4_DESIGN.md, step 2): fine ghosts copy the parent TT (injection), coarse ghosts take
+# S4_DESIGN.md, steps 2-3): fine ghosts copy the parent TT (injection), coarse ghosts take
 # the rounded TT average of the children (kinetics_amr.cpp, RestrictTT). Cases, 1D,
 # middle half of the mesh refined one level, sl_order 1:
 #   wave      smooth entropy wave (freestream deck), periodic, nu0 = 0, uncoupled
 #   sod       Sod deck, outflow, nu0 = 1e2, closure coupling
 #   sod_lomac same with kinetics/lomac
+# and 2D: blast2d deck, 16^2 cells, central quarter refined, Nv 12^3, coupled (fine
+# blocks with coarse face and corner neighbors; also hydro mass and energy conserved to
+# 1e-12, measured 8e-16 / 7e-15).
 # Pass, per case: every derived moment field of every dump within tol = 1e-10 of the
-# dense run on the same mesh (tt_eps = 1e-14); history mass and energy within tol; no
-# rank-cap hits or failed SVDs in streaming, relaxation or restriction; the restriction
-# ran (its discarded-norm history column is nonzero). Instrument check: sod at
+# dense run on the same mesh (tt_eps = 1e-14; measured 1e-11 to 1e-12); history mass and
+# energy within tol; no rank-cap hits or failed SVDs in streaming, relaxation or
+# restriction; the restriction ran (its discarded-norm history column is nonzero). Instrument check: sod at
 # tt_eps = 1e-8 is farther from dense than at 1e-14 by a factor >= 100.
 
 import glob
@@ -73,6 +76,31 @@ sod = smr + [
     "kinetics/v3min=-8.0",
     "kinetics/v3max=8.0",
 ]
+# 2D: refined central patch, so fine blocks have coarse face and corner neighbors.
+blast2d = [
+    "parthenon/mesh/refinement=static",
+    "parthenon/mesh/numlevel=2",
+    "parthenon/static_refinement0/x1min=-0.25",
+    "parthenon/static_refinement0/x1max=0.25",
+    "parthenon/static_refinement0/x2min=-0.25",
+    "parthenon/static_refinement0/x2max=0.25",
+    "parthenon/static_refinement0/level=1",
+    "parthenon/mesh/nx1=16",
+    "parthenon/mesh/nx2=16",
+    "parthenon/meshblock/nx1=4",
+    "parthenon/meshblock/nx2=4",
+    "parthenon/output2/dt=0.01",
+    "parthenon/output3/dt=-1",
+    "parthenon/time/tlim=0.04",
+    "parthenon/output1/dt=0.02",
+    "parthenon/output1/variables=" + ",".join(moment_vars),
+    "kinetics/tt_rank_max=24",
+    "kinetics/min_vth_over_dv=0",
+] + [
+    f"kinetics/{a}"
+    for d in (1, 2, 3)
+    for a in (f"nv{d}=12", f"v{d}min=-9.5", f"v{d}max=9.5")
+]
 cases = {
     "wave": (
         "kinetics/freestream",
@@ -87,6 +115,7 @@ cases = {
     ),
     "sod": ("kinetics/sod", sod),
     "sod_lomac": ("kinetics/sod", sod + ["kinetics/lomac=true"]),
+    "blast2d": ("kinetics/blast2d", blast2d),
 }
 
 
@@ -187,6 +216,15 @@ def analyze():
                 f"cap/svd {caps}, restriction discarded {restricted:.2e})"
             )
             ok = False
+    # 2D, periodic: hydro mass and energy conserved through the flux correction.
+    for rep in ("dense", "tt"):
+        h, c = read_history(pid("blast2d", rep))
+        for n in ("kinetics_sums_7", "kinetics_sums_11"):
+            dr = np.max(np.abs(h[:, c[n]] - h[0, c[n]])) / np.abs(h[0, c[n]])
+            logger.info(f"blast2d {rep}: hydro {n} drift {dr:.2e}")
+            if dr > 1.0e-12:
+                logger.warning(f"blast2d {rep}: hydro {n} drift {dr:.2e}")
+                ok = False
     e_tight = moment_diff(pid("sod", "dense"), pid("sod", "tt"))
     e_loose = moment_diff(pid("sod", "dense"), pid("sod", "tt", "_loose"))
     logger.info(f"eps convergence: 1e-8 -> {e_loose:.2e}, 1e-14 -> {e_tight:.2e}")

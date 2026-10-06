@@ -508,9 +508,11 @@ order (measured 0.92, 0.96 for ``sl_order = 1``) and stays below the uniform
 root-level error; the kinetic mass error at the interfaces decreases like the cell width;
 with coupling, hydro mass and energy are conserved to roundoff, and with LoMaC the
 kinetic sums equal the hydro sums to roundoff.
-``tst/scripts/kinetics/tt_smr.py``: on a two-level 1D mesh the TT run at
-``tt_eps = 1e-14`` matches the dense run to 1e-10 (measured 1e-11 to 1e-12; free
-streaming, coupled Sod, coupled Sod with LoMaC), without rank-cap hits.
+``tst/scripts/kinetics/tt_smr.py``: on two-level meshes the TT run at
+``tt_eps = 1e-14`` matches the dense run to 1e-10 (measured 1e-11 to 1e-12; 1D free
+streaming, coupled Sod, coupled Sod with LoMaC, and a coupled 2D blast with a refined
+central patch), without rank-cap hits; in 2D the hydro mass and energy stay conserved to
+roundoff.
 
 Output
 ------
