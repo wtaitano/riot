@@ -145,6 +145,13 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
                       "kinetics: representation = tt does not support mesh refinement");
   }
 
+  // Mesh refinement (S4_DESIGN.md)
+  const std::string refinement =
+      pin->GetOrAddString("parthenon/mesh", "refinement", "none");
+  const bool multilevel = (refinement != "none");
+  PARTHENON_REQUIRE(!multilevel || parthenon::IsCoord<parthenon::UniformCartesian>(),
+                    "kinetics: mesh refinement needs Cartesian coordinates");
+
   // Discrete equilibrium solve
   EquilibriumParams eq;
   eq.tol = pin->GetOrAddReal(input_block, "eq_tol", 1.0e-13,
@@ -238,9 +245,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
     PARTHENON_REQUIRE(parthenon::IsCoord<parthenon::UniformCartesian>(),
                       "kinetics: closure_coupling needs Cartesian coordinates");
     // closure_old carries over from the previous step and is not remeshed.
-    PARTHENON_REQUIRE(pin->GetOrAddString("parthenon/mesh", "refinement", "none") ==
-                          "none",
-                      "kinetics: closure_coupling does not support mesh refinement");
+    PARTHENON_REQUIRE(refinement != "adaptive",
+                      "kinetics: closure_coupling does not support adaptive refinement");
   }
   // LoMaC: kinetic moments enslaved to hydro (S3_DESIGN.md, S3-Q8/Q16)
   const bool lomac = Lomac(pin);
@@ -286,6 +292,12 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   Metadata mf({Metadata::Cell, Metadata::Independent, Metadata::FillGhost,
                Metadata::Restart, MetadataKinetics, MetadataOperatorSplit},
               std::vector<int>({ncomp_f}));
+  // Fine ghosts and new fine cells copy the parent cell (S4-Q7). Parthenon's default
+  // minmod slope is a nonlinear limiter.
+  if (!tt) {
+    using namespace parthenon::refinement_ops;
+    mf.RegisterRefinementOps<ProlongatePiecewiseConstant, RestrictAverage>();
+  }
   if (tt) {
     pkg->AddField<fields::f_tt>(mf);
   } else {

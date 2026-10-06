@@ -363,6 +363,11 @@ void EnrollKineticBCs(StateDescriptor *pkg, ParameterInput *pin) {
       PARTHENON_REQUIRE(
           !wall || pkg->Param<SLParams>("sl_params").order == 1,
           "kinetics: kinetic walls with closure_coupling need sl_order = 1");
+      // The wall flux is accumulated on one level (S4-Q5).
+      PARTHENON_REQUIRE(
+          !wall || pin->GetOrAddString("parthenon/mesh", "refinement", "none") == "none",
+          "kinetics: kinetic walls with closure_coupling do not support "
+          "mesh refinement");
       coupled_walls[f] = wall;
     }
 

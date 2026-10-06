@@ -418,7 +418,8 @@ The kinetics step runs before the hydro step. The closure is evaluated from :mat
 at :math:`t^n` and :math:`t^{n+1}` on the entire block (ghost cells follow the kinetic
 boundary conditions), and RK stage :math:`s` uses
 :math:`(1-c_s)\,\Pi^n + c_s\,\Pi^{n+1}`, so the coupling is second order in time.
-Cartesian coordinates only; no mesh refinement.
+Cartesian coordinates only; static mesh refinement is supported (see
+:ref:`kinetics-mesh-refinement`), adaptive refinement is not yet.
 
 Checks (``tst/scripts/kinetics/closure_coupling.py``): the gap between the hydro and the
 kinetic density, velocity and temperature shrinks with the mesh (it does not without the
@@ -476,6 +477,31 @@ Checks (``tst/scripts/kinetics/lomac.py``): kinetic and hydro moments agree to r
 at every step and in every cell (dense and TT, periodic and with walls); the LoMaC
 kinetic solution converges to the standalone kinetic solution with the mesh; the TT
 ranks stay within ``tt_rank_max``.
+
+.. _kinetics-mesh-refinement:
+
+Mesh refinement
+---------------
+
+The dense representation runs on statically refined meshes
+(``parthenon/mesh/refinement = static``, Cartesian coordinates). Fine ghost cells and
+new fine cells copy :math:`f` of the parent cell (piecewise-constant injection), and
+coarse ghost cells take the average of the children. All levels share one
+semi-Lagrangian substep, set by the finest cell width. The tensor-train representation,
+adaptive refinement and coupled kinetic walls on a refined mesh are not supported yet.
+
+The semi-Lagrangian update is not in flux form, so the kinetic mass, momentum and energy
+are not conserved at fine-coarse faces: the error is first order in the cell width (the
+history columns ``kinetics_sums_0..4`` show it). Hydro stays conservative (flux
+correction, closure fluxes included), and ``lomac = true`` restores the kinetic moments
+to the hydro ones every step.
+
+Check (``tst/scripts/kinetics/smr_interface.py``): an entropy wave streams freely across
+two fine-coarse interfaces of a periodic 1D mesh. The density error converges at first
+order (measured 0.92, 0.96 for ``sl_order = 1``) and stays below the uniform
+root-level error; the kinetic mass error at the interfaces decreases like the cell width;
+with coupling, hydro mass and energy are conserved to roundoff, and with LoMaC the
+kinetic sums equal the hydro sums to roundoff.
 
 Output
 ------
