@@ -159,12 +159,14 @@ TaskStatus CheckEquilibriumFallbacks(Mesh *pm) {
 //! hydro step.
 TaskStatus ResetFallbackFlags(MeshData<Real> *md) {
   auto pm = md->GetParentPointer();
-  static auto desc = MakePackDescriptor<fields::eq_fallback, fields::tt_round>(
-      pm->resolved_packages.get());
+  static auto desc =
+      MakePackDescriptor<fields::eq_fallback, fields::tt_round, fields::tt_amr_round>(
+          pm->resolved_packages.get());
   auto v = desc.GetPack(md);
   if (v.GetNBlocks() == 0) return TaskStatus::complete;
   const bool tt =
       GetRepresentation(pm->packages.Get(pkg_name).get()) == Representation::tt;
+  const bool amr = tt && pm->multilevel;
   auto space = RiotFlatLoop::GetIndexSpace(IndexDomain::entire, v.GetNBlocks(), md);
   RiotFlatLoop::four_d(
       "Kinetics::ResetFallbackFlags", space,
@@ -173,6 +175,10 @@ TaskStatus ResetFallbackFlags(MeshData<Real> *md) {
         if (tt) {
           for (int a = 0; a < 3; ++a)
             v(b, fields::tt_round(a), k, j, i) = 0.0;
+        }
+        if (amr) {
+          for (int a = 0; a < 3; ++a)
+            v(b, fields::tt_amr_round(a), k, j, i) = 0.0;
         }
       });
   return TaskStatus::complete;

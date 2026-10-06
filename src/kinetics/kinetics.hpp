@@ -58,6 +58,9 @@ VARIABLE_VECTOR(kinetics, tt_rank, false, 2);  // representation = tt: (r1, r2)
 // representation = tt, per cell over the last hydro step: sum of relative discarded
 // norms of the roundings, rank-cap hits, non-converged SVDs.
 VARIABLE_VECTOR(kinetics, tt_round, false, 3);
+// representation = tt on a multilevel mesh, per cell over the last hydro step: the same
+// statistics for the roundings of the restriction to the coarse buffer (kinetics_amr).
+VARIABLE_VECTOR(kinetics, tt_amr_round, false, 3);
 // representation = tt, tt_diag = cross, per cell at the last history output: cross
 // entropy integrand sum, phi evaluations, max(q1, q2), rank-cap hit, not converged.
 VARIABLE_VECTOR(kinetics, tt_cross, false, 5);
@@ -146,6 +149,15 @@ TaskStatus Stream(MeshData<Real> *src, MeshData<Real> *tmp, MeshData<Real> *dst,
 // Largest substep allowed by kinetics/cfl over the whole mesh (MPI-reduced).
 Real MaxStreamingStep(Mesh *pm);
 
+// Mesh refinement (kinetics_amr.cpp). RestrictTT: coarse buffer of a tensor-train f <-
+// rounded average of the children, on blocks with a coarser neighbor (no-op for dense f
+// or a single-level mesh). AddFExchangeTasks: RestrictTT when needed, then the ghost
+// exchange of the f register md. ExchangeFGhosts: the same, executed now on base.
+TaskStatus RestrictTT(MeshData<Real> *md);
+TaskID AddFExchangeTasks(TaskID dependency, TaskList &tl,
+                         std::shared_ptr<MeshData<Real>> &md);
+void ExchangeFGhosts(Mesh *pm);
+
 // Velocity-space representation of f.
 enum class Representation { dense, tt };
 inline Representation GetRepresentation(const StateDescriptor *pkg) {
@@ -188,6 +200,8 @@ std::vector<Real> HistoryRankSums(MeshData<Real> *md);
 Real HistoryMaxRank(MeshData<Real> *md);
 // representation = tt: kinetics.tt_round summed over the interior cells.
 std::vector<Real> HistoryRoundSums(MeshData<Real> *md);
+// representation = tt, multilevel mesh: kinetics.tt_amr_round summed over interior cells.
+std::vector<Real> HistoryAmrRoundSums(MeshData<Real> *md);
 // tt_diag = cross: kinetics.tt_cross columns 1-4 summed over the interior cells (filled
 // by HistorySums, which is enrolled before it).
 std::vector<Real> HistoryCrossSums(MeshData<Real> *md);

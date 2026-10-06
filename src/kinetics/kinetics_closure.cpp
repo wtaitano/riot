@@ -150,6 +150,7 @@ TaskStatus AddClosureFluxes(MeshData<Real> *md, const Real w) {
 //! restart.
 void BeforeLoop(Mesh *pm, ParameterInput *pin, parthenon::SimTime &tm) {
   CheckRestartLayout(pm, pin, tm);
+  ExchangeFGhosts(pm);
   if (!pm->packages.Get(pkg_name)->Param<bool>("closure_coupling")) return;
   for (int i = 0; i < pm->DefaultNumPartitions(); ++i)
     ComputeClosure(pm->mesh_data.GetOrAdd("base", i).get());

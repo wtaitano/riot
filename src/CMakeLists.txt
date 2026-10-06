@@ -38,6 +38,7 @@ set (SRC_LIST
   kinetics/equilibrium.hpp
   kinetics/kinetics.cpp
   kinetics/kinetics.hpp
+  kinetics/kinetics_amr.cpp
   kinetics/kinetics_bcs.cpp
   kinetics/kinetics_bcs.hpp
   kinetics/kinetics_cell.hpp

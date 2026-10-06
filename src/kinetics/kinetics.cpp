@@ -55,6 +55,19 @@ Species GasFromMaterial(ParameterInput *pin) {
   return s;
 }
 
+// Restriction operator that does nothing: Parthenon must not average tensor-train slots
+// (kinetics_amr.cpp fills the coarse buffer instead).
+struct RestrictNone {
+  static constexpr bool OperationRequired(parthenon::TopologicalElement,
+                                          parthenon::TopologicalElement) {
+    return false;
+  }
+  template <int DIM, parthenon::TopologicalElement EL = parthenon::TopologicalElement::CC,
+            parthenon::TopologicalElement CEL = parthenon::TopologicalElement::CC,
+            class... Args>
+  KOKKOS_FORCEINLINE_FUNCTION static void Do(Args &&...) {}
+};
+
 } // namespace
 
 //----------------------------------------------------------------------------------------
@@ -140,9 +153,10 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
     params.Add("tt_cross", cross);
     params.Add("tt_cross_delta", cross_delta);
     params.Add("tt_diag", diag);
-    PARTHENON_REQUIRE(pin->GetOrAddString("parthenon/mesh", "refinement", "none") ==
-                          "none",
-                      "kinetics: representation = tt does not support mesh refinement");
+    PARTHENON_REQUIRE(pin->GetOrAddString("parthenon/mesh", "refinement", "none") !=
+                          "adaptive",
+                      "kinetics: representation = tt does not support adaptive "
+                      "refinement");
   }
 
   // Mesh refinement (S4_DESIGN.md)
@@ -292,11 +306,16 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   Metadata mf({Metadata::Cell, Metadata::Independent, Metadata::FillGhost,
                Metadata::Restart, MetadataKinetics, MetadataOperatorSplit},
               std::vector<int>({ncomp_f}));
-  // Fine ghosts and new fine cells copy the parent cell (S4-Q7). Parthenon's default
-  // minmod slope is a nonlinear limiter.
-  if (!tt) {
+  // Fine ghosts and new fine cells copy the parent cell (S4-Q7; Parthenon's default
+  // minmod slope is a nonlinear limiter). The slot-wise copy is exact for TT too; TT
+  // restriction is RestrictTT (kinetics_amr.cpp).
+  {
     using namespace parthenon::refinement_ops;
-    mf.RegisterRefinementOps<ProlongatePiecewiseConstant, RestrictAverage>();
+    if (tt) {
+      mf.RegisterRefinementOps<ProlongatePiecewiseConstant, RestrictNone>();
+    } else {
+      mf.RegisterRefinementOps<ProlongatePiecewiseConstant, RestrictAverage>();
+    }
   }
   if (tt) {
     pkg->AddField<fields::f_tt>(mf);
@@ -345,6 +364,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
                   MetadataOperatorSplit},
                  std::vector<int>({3}));
     pkg->AddField<fields::tt_round>(m3r);
+    pkg->AddField<fields::tt_amr_round>(m3r);
     if (params.Get<std::string>("tt_diag") == "cross") {
       Metadata m5({Metadata::Cell, Metadata::Derived, Metadata::OneCopy, MetadataKinetics,
                    MetadataOperatorSplit},
@@ -371,6 +391,9 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
         UserHistoryOperation::sum, HistoryRankSums, "kinetics_tt_ranks"));
     hst_vecs.emplace_back(parthenon::HistoryOutputVec(
         UserHistoryOperation::sum, HistoryRoundSums, "kinetics_tt_round"));
+    if (multilevel)
+      hst_vecs.emplace_back(parthenon::HistoryOutputVec(
+          UserHistoryOperation::sum, HistoryAmrRoundSums, "kinetics_tt_amr_round"));
     if (params.Get<std::string>("tt_diag") == "cross")
       hst_vecs.emplace_back(parthenon::HistoryOutputVec(
           UserHistoryOperation::sum, HistoryCrossSums, "kinetics_tt_cross"));

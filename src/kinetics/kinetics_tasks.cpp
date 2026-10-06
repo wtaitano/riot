@@ -112,6 +112,7 @@ TaskCollection KineticsTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
   std::vector<std::string> names = {tt ? fields::f_tt::name() : fields::f::name(),
                                     fields::eq_fallback::name()};
   if (tt) names.push_back(fields::tt_round::name());
+  if (tt && pm->multilevel) names.push_back(fields::tt_amr_round::name()); // OneCopy
   const bool walls = HasCoupledWalls(pkg.get());
   if (walls) names.push_back(fields::wall_flux::name()); // OneCopy: shared by k0, k1, k2
   auto &base = pm->mesh_data.Get();
@@ -206,9 +207,7 @@ TaskCollection KineticsTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
       auto &tl = region[i];
       auto &src = pm->mesh_data.GetOrAdd(cur == 0 ? k0_name : k1_name, i);
       auto &dst = pm->mesh_data.GetOrAdd(cur == 0 ? k1_name : k0_name, i);
-      auto recv =
-          tl.AddTask(none, parthenon::StartReceiveBoundBufs<BoundaryType::any>, src);
-      auto bc = parthenon::AddBoundaryExchangeTasks(recv, tl, src, pm->multilevel);
+      auto bc = AddFExchangeTasks(none, tl, src);
       MeshData<Real> *tmp = sweeps ? pm->mesh_data.GetOrAdd(k2_name, i).get() : nullptr;
       auto stream =
           tl.AddTask(bc, Stream, src.get(), tmp, dst.get(), hs, last_step && !relax);
@@ -231,9 +230,7 @@ TaskCollection KineticsTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
     for (int i = 0; i < num_partitions; ++i) {
       auto &tl = region[i];
       auto &k0 = pm->mesh_data.GetOrAdd(k0_name, i);
-      auto recv =
-          tl.AddTask(none, parthenon::StartReceiveBoundBufs<BoundaryType::any>, k0);
-      auto bc = parthenon::AddBoundaryExchangeTasks(recv, tl, k0, pm->multilevel);
+      auto bc = AddFExchangeTasks(none, tl, k0);
       tl.AddTask(bc, ComputeClosure, pm->mesh_data.GetOrAdd("base", i).get());
     }
   }

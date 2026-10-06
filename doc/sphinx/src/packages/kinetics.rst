@@ -265,8 +265,8 @@ derived output fields are the same as for ``dense``, plus ``kinetics.tt_rank``
    then :math:`+\,w_+ f_{i+1}`, where the weights depend only on :math:`v_x` and so
    scale one core. Specular walls reverse the wall-normal core exactly; diffuse walls
    build the ghost as a masked sum of the boundary cell and the wall Maxwellian and
-   round it. Mesh refinement and ``sl_limiter = minmax`` (a pointwise limiter has no
-   tensor-train form) are not available.
+   round it. Adaptive mesh refinement and ``sl_limiter = minmax`` (a pointwise limiter
+   has no tensor-train form) are not available.
 
    Every rounding adds an error of up to ``tt_eps`` (relative), and these errors
    accumulate over the steps: a substep of ``sl_dirk2`` rounds 6 times (3 per stage).
@@ -483,12 +483,18 @@ ranks stay within ``tt_rank_max``.
 Mesh refinement
 ---------------
 
-The dense representation runs on statically refined meshes
+Both representations run on statically refined meshes
 (``parthenon/mesh/refinement = static``, Cartesian coordinates). Fine ghost cells and
 new fine cells copy :math:`f` of the parent cell (piecewise-constant injection), and
 coarse ghost cells take the average of the children. All levels share one
-semi-Lagrangian substep, set by the finest cell width. The tensor-train representation,
-adaptive refinement and coupled kinetic walls on a refined mesh are not supported yet.
+semi-Lagrangian substep, set by the finest cell width. Adaptive refinement and coupled
+kinetic walls on a refined mesh are not supported yet.
+
+With ``representation = tt`` the injection copies the cores, which is exact. The average
+of the :math:`2^d` children is formed as a TT and rounded after every addition (block
+sum of ranks :math:`\le 2\,r_{\max}`, ``tt_eps`` and ``tt_rank_max`` of the run), never
+as a dense array. Its rounding statistics are in the history columns
+``kinetics_tt_amr_round_0..2`` (as ``kinetics_tt_round``).
 
 The semi-Lagrangian update is not in flux form, so the kinetic mass, momentum and energy
 are not conserved at fine-coarse faces: the error is first order in the cell width (the
@@ -502,6 +508,9 @@ order (measured 0.92, 0.96 for ``sl_order = 1``) and stays below the uniform
 root-level error; the kinetic mass error at the interfaces decreases like the cell width;
 with coupling, hydro mass and energy are conserved to roundoff, and with LoMaC the
 kinetic sums equal the hydro sums to roundoff.
+``tst/scripts/kinetics/tt_smr.py``: on a two-level 1D mesh the TT run at
+``tt_eps = 1e-14`` matches the dense run to 1e-10 (measured 1e-11 to 1e-12; free
+streaming, coupled Sod, coupled Sod with LoMaC), without rank-cap hits.
 
 Output
 ------

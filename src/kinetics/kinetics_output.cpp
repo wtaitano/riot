@@ -348,6 +348,34 @@ std::vector<Real> HistoryRoundSums(MeshData<Real> *md) {
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn  std::vector<Real> Kinetics::HistoryAmrRoundSums
+//! \brief representation = tt on a multilevel mesh: as HistoryRoundSums, for the
+//! roundings of the restriction to coarse buffers (RestrictTT).
+std::vector<Real> HistoryAmrRoundSums(MeshData<Real> *md) {
+  constexpr int NSUM = 3;
+  auto pm = md->GetParentPointer();
+  static auto desc =
+      MakePackDescriptor<fields::tt_amr_round>(pm->resolved_packages.get());
+  auto v = desc.GetPack(md);
+  std::vector<Real> sums(NSUM, 0.0);
+  if (v.GetNBlocks() == 0) return sums;
+  using rt =
+      RiotFlatReduce::ReductionType<RiotUtils::GlobalSum<Real, Kokkos::HostSpace, NSUM>>;
+  auto space = rt::GetIndexSpace(IndexDomain::interior, v.GetNBlocks(), md);
+  const auto result = rt::four_d(
+      "Kinetics::HistoryAmrRoundSums", space,
+      KOKKOS_LAMBDA(const int b, const int k, const int j, const int i,
+                    RiotUtils::array_type<Real, NSUM> &acc) {
+        for (int a = 0; a < NSUM; ++a)
+          acc.my_array[a] += v(b, fields::tt_amr_round(a), k, j, i);
+      });
+  Kokkos::fence();
+  for (int a = 0; a < NSUM; ++a)
+    sums[a] = result.my_array[a];
+  return sums;
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  std::vector<Real> Kinetics::HistoryCrossSums
 //! \brief tt_diag = cross, over the interior cells at this output: phi evaluations,
 //! sum of max(q1, q2), rank-cap hits, cells not converged. Filled by the cross pass of

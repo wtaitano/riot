@@ -207,16 +207,16 @@ TaskCollection LomacTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
       GetRepresentation(pm->packages.Get(pkg_name).get()) == Representation::tt;
   auto &base = pm->mesh_data.Get();
   // f only, sharing base's memory, for the ghost exchange
-  pm->mesh_data.AddShallow(lomac_name, base,
-                           {tt ? fields::f_tt::name() : fields::f::name()});
+  std::vector<std::string> names = {tt ? fields::f_tt::name() : fields::f::name()};
+  if (tt && pm->multilevel) names.push_back(fields::tt_amr_round::name());
+  pm->mesh_data.AddShallow(lomac_name, base, names);
   TaskRegion &region = tc.AddRegion(num_partitions);
   for (int i = 0; i < num_partitions; ++i) {
     auto &tl = region[i];
     auto &mb = pm->mesh_data.GetOrAdd("base", i);
     auto &mf = pm->mesh_data.GetOrAdd(lomac_name, i);
     auto corr = tl.AddTask(none, LomacCorrect, mb.get());
-    auto recv = tl.AddTask(corr, parthenon::StartReceiveBoundBufs<BoundaryType::any>, mf);
-    auto bc = parthenon::AddBoundaryExchangeTasks(recv, tl, mf, pm->multilevel);
+    auto bc = AddFExchangeTasks(corr, tl, mf);
     tl.AddTask(bc, ComputeClosure, mb.get());
   }
   TaskRegion &check = tc.AddRegion(1);
