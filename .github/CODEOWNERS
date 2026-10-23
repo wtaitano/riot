@@ -1,0 +1,3 @@
+# Code owners. See https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+# The conditional kinetic miniapp (ckm) is owned by its subteam.
+/conditional_kinetic_miniapp/ @wtaitano

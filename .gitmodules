@@ -13,3 +13,11 @@
 [submodule "external/parthenon"]
 	path = external/parthenon
 	url = https://github.com/parthenon-hpc-lab/parthenon
+[submodule "conditional_kinetic_miniapp/external/parthenon"]
+	path = conditional_kinetic_miniapp/external/parthenon
+	url = https://github.com/parthenon-hpc-lab/parthenon
+	update = none
+[submodule "conditional_kinetic_miniapp/external/Catch2"]
+	path = conditional_kinetic_miniapp/external/Catch2
+	url = https://github.com/catchorg/Catch2
+	update = none

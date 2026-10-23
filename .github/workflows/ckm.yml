@@ -1,0 +1,113 @@
+# This file was made with the assistance of generative AI.
+# CI for the conditional kinetic miniapp (ckm). Runs only when the miniapp, its
+# submodule pins, or this workflow change, and never touches riot's own build.
+name: ckm
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    paths:
+      - "conditional_kinetic_miniapp/**"
+      - ".gitmodules"
+      - ".github/CODEOWNERS"
+      - ".github/workflows/ckm.yml"
+  push:
+    branches: [main, "wtaitano/ckm"]
+    paths:
+      - "conditional_kinetic_miniapp/**"
+      - ".gitmodules"
+      - ".github/CODEOWNERS"
+      - ".github/workflows/ckm.yml"
+
+env:
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CCACHE_MAXSIZE: 2G
+
+permissions:
+  contents: read
+
+jobs:
+  boundary:
+    name: ckm boundary
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Check isolation boundary
+        run: ./conditional_kinetic_miniapp/script/check_boundary.sh
+
+  docs:
+    # Build only; ckm docs are not deployed (riot's gh-pages deploy replaces the site).
+    name: ckm docs
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build docs (warnings are errors)
+        run: |
+          pip install sphinx sphinx-rtd-theme
+          sphinx-build -W --keep-going -n conditional_kinetic_miniapp/doc/sphinx _build/ckm-docs
+
+  build:
+    name: ckm (${{ matrix.mode }})
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: serial
+            mpi: "OFF"
+            hdf5_pkg: libhdf5-dev
+          - mode: mpi
+            mpi: "ON"
+            hdf5_pkg: libhdf5-mpich-dev
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Initialize ckm submodules
+        run: ./conditional_kinetic_miniapp/script/setup.sh
+
+      - name: Identify ckm dependency revisions
+        id: dependencies
+        run: |
+          echo "hash=$(git submodule status --recursive -- conditional_kinetic_miniapp | sha256sum | cut -d' ' -f1)" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Install Ubuntu build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            ccache \
+            cmake \
+            ninja-build \
+            libcatch2-dev \
+            ${{ matrix.hdf5_pkg }}
+
+      - name: Restore compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-ckm-v1-${{ runner.os }}-${{ matrix.mode }}-${{ steps.dependencies.outputs.hash }}
+          restore-keys: |
+            ccache-ckm-v1-${{ runner.os }}-${{ matrix.mode }}-
+
+      - name: Build and test
+        run: |
+          cmake -S conditional_kinetic_miniapp -B build-ckm -G Ninja \
+            -DCKM_ENABLE_MPI=${{ matrix.mpi }} \
+            -DCKM_ENABLE_UNIT_TESTS=ON \
+            -DCKM_BUILD_CATCH2=OFF \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build-ckm --parallel 4
+          ccache --show-stats
+          ctest --test-dir build-ckm --output-on-failure
