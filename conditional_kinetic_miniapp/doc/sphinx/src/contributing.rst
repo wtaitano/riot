@@ -104,3 +104,46 @@ Plan histories
 If you used agentic AI, add a plan file to ``conditional_kinetic_miniapp/plan_histories/``
 in your PR. Rename it to ``ckm-fork-pr-<N>.md`` once the PR number is known. Riot's
 file-level AI disclaimer comment rule applies unchanged.
+
+AI coding agents
+----------------
+
+``conditional_kinetic_miniapp/AGENTS.md`` is the single source of instructions for
+AI coding agents (Claude Code, Codex, Copilot, Cursor, ...). ``CLAUDE.md`` only
+imports it. Read it whether or not you use an agent; it is also a concise summary of
+the rules on this page.
+
+Claude Code users get shared configuration from
+``conditional_kinetic_miniapp/.claude/`` on ``git pull``. It only applies when
+``claude`` is **launched from** ``conditional_kinetic_miniapp/``, because project
+settings are not inherited from parent directories.
+
+=================================  ==================================================
+Item                               What it does
+=================================  ==================================================
+``settings.json`` plugins          Enables ``mattpocock-skills`` from the official
+                                   marketplace (installed on first trusted launch)
+``settings.json`` permissions      Allows build/test/format and local git; asks
+                                   before ``git push``, ``merge``, ``rebase``,
+                                   ``reset``; denies pushes to ``upstream``,
+                                   force-pushes, and reading credential files
+``hooks/guard_edit.sh``            Blocks edits outside the miniapp, except the
+                                   three allowed root files
+``hooks/guard_git.sh``             Blocks pushes to ``lanl/riot``, force-pushes, and
+                                   rebase/reset/delete of ``wtaitano/ckm`` or ``main``
+``agents/ckm-implementer.md``      Implements a scoped change test-first, builds and
+                                   tests serial and MPI, formats, writes the plan file
+``agents/ckm-reviewer.md``         Read-only review: correctness, tensor-train
+                                   semantics, isolation, conventions, AI policy
+``skills/ckm-*``                   ``ckm-setup``, ``ckm-build``, ``ckm-test``,
+                                   ``ckm-format``, ``ckm-plan-history``
+=================================  ==================================================
+
+When you first launch ``claude`` in the miniapp, accept the workspace-trust prompt so
+the shared settings take effect. The hooks run small shell scripts from the repo.
+Personal preferences (model, theme, extra plugins) go in your own
+``.claude/settings.local.json``, which is git-ignored.
+
+The hooks and permissions are guardrails for agents, not security. The GitHub
+rulesets on the fork (see :doc:`maintainers`) are what actually protect shared
+history. Agents commit locally; a human pushes and opens PRs.

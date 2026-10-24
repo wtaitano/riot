@@ -82,7 +82,15 @@ script/            setup, isolation check, contributor and maintainer scripts
 doc/sphinx/        ckm documentation
 plan_histories/    agentic-AI plan files (riot policy)
 external/          parthenon (tensor-train branch), Catch2
+AGENTS.md          instructions for AI coding agents (CLAUDE.md imports it)
+.claude/           shared Claude Code settings, hooks, agents, skills
 ```
+
+## AI coding agents
+
+Read [`AGENTS.md`](AGENTS.md). Claude Code users should launch `claude` from **this
+directory**, because the shared `.claude/` settings, hooks, agents, and skills only
+apply there. See the "AI coding agents" section of `doc/sphinx/src/contributing.rst`.
 
 ## Contributing
 
