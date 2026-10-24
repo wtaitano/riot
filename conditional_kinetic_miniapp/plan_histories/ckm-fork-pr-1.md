@@ -1,7 +1,6 @@
-# Plan: ckm skeleton (first internal PR into wtaitano/ckm)
+# Plan: ckm skeleton (wtaitano/riot#1, first internal PR into wtaitano/ckm)
 
-Generated with Claude Code (agentic AI). Rename to `ckm-fork-pr-<N>.md` once the
-internal PR number is known.
+Generated with Claude Code (agentic AI).
 
 ## Goal
 
