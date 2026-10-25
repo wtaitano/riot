@@ -51,7 +51,10 @@ Run everything from `conditional_kinetic_miniapp/`.
   `build-serial/`, so they stay writable under the Claude Code sandbox, which only
   allows writes in the launch directory. Riot's `.gitignore` rule `build*/` already
   ignores them.
-- **Modules.** Load modules **in the same shell command** as the build.
+- **Modules.** Load modules **in the same shell command** as the build, and never
+  pipe `module load` (for example `module load ... | head`). The pipe runs it in a
+  subshell, so nothing gets loaded and no error is printed. `module load` works
+  inside the sandbox.
 
 ```bash
 git -C .. submodule update --init --recursive \
