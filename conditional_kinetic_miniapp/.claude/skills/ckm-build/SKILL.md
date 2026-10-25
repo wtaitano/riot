@@ -5,14 +5,17 @@ description: Configure and build ckm as part of riot (RIOT_BUILD_CKM=ON), serial
 
 <!-- This file was made in part with generative AI. -->
 
-ckm is built inside riot's CMake project. Run everything from the **riot root**
-(`cd ..` from the miniapp). Build directories go there as `build-ckm-*`, which riot's
-`.gitignore` already ignores.
+ckm is built inside riot's CMake project. The source is the riot root (`..`).
 
-**Submodules.** Do this once, and again after a Parthenon pin bump:
+Run everything from `conditional_kinetic_miniapp/`. Build directories live **inside
+the miniapp** as `build-mpi/` and `build-serial/`. That keeps them writable under the
+Claude Code sandbox, which only allows writes in the launch directory. Riot's
+`.gitignore` rule `build*/` already ignores them.
+
+**Submodules.** Fetch them once, and again after a Parthenon pin bump:
 
 ```bash
-git submodule update --init --recursive \
+git -C .. submodule update --init --recursive \
   external/parthenon external/kokkos-kernels external/singularity-eos external/singularity-opac
 ```
 
@@ -20,18 +23,18 @@ git submodule update --init --recursive \
 
 ```bash
 module load openmpi/3.1.6-gcc_12.2.0 hdf5/1.12.2 cmake/3.26.3 && \
-cmake -S . -B build-ckm-mpi -G Ninja -DRIOT_BUILD_CKM=ON -DRIOT_ENABLE_UNIT_TESTS=ON \
+cmake -S .. -B build-mpi -G Ninja -DRIOT_BUILD_CKM=ON -DRIOT_ENABLE_UNIT_TESTS=ON \
   -DRIOT_BUILD_PYTHON=OFF && \
-cmake --build build-ckm-mpi -j 32 --target ckm ckm_unit_tests
+cmake --build build-mpi -j 32 --target ckm ckm_unit_tests
 ```
 
 **Serial:**
 
 ```bash
 module load gcc/12.2.0 cmake/3.26.3 && \
-cmake -S . -B build-ckm-serial -G Ninja -DRIOT_BUILD_CKM=ON -DRIOT_ENABLE_UNIT_TESTS=ON \
+cmake -S .. -B build-serial -G Ninja -DRIOT_BUILD_CKM=ON -DRIOT_ENABLE_UNIT_TESTS=ON \
   -DRIOT_BUILD_PYTHON=OFF -DRIOT_ENABLE_MPI=OFF -DHDF5_ROOT=/usr && \
-cmake --build build-ckm-serial -j 32 --target ckm ckm_unit_tests
+cmake --build build-serial -j 32 --target ckm ckm_unit_tests
 ```
 
 ## Notes
@@ -47,7 +50,7 @@ cmake --build build-ckm-serial -j 32 --target ckm ckm_unit_tests
   serial build fails inside `src/` (riot's code), that is why.
 - **Targets.** Build only `ckm ckm_unit_tests`. If you changed riot files (the root
   `CMakeLists.txt` or the Parthenon pin), also build the default target and run riot's
-  tests (`ctest --test-dir build-ckm-mpi`).
+  tests (`ctest --test-dir build-mpi`).
 - **Output.** Send build output to a log file and show only errors and the last few
   lines.
 

@@ -26,17 +26,19 @@ This file was made in part with generative AI.
 
 ## Building
 
-Run everything from the riot root. ckm needs C++20 (required by the tensor-train
+Run everything from this directory, `conditional_kinetic_miniapp/`. The CMake source
+is the riot root (`..`), and build directories (`build-*`) go here, where riot's
+`.gitignore` already ignores them. ckm needs C++20 (required by the tensor-train
 branch), CMake 3.26 or newer, and HDF5. MPI is on by default, and with MPI on, HDF5
 must be parallel.
 
 ```bash
-git submodule update --init --recursive \
+git -C .. submodule update --init --recursive \
   external/parthenon external/kokkos-kernels external/singularity-eos external/singularity-opac
 
-cmake -S . -B build-ckm -DRIOT_BUILD_CKM=ON -DRIOT_ENABLE_UNIT_TESTS=ON -DRIOT_BUILD_PYTHON=OFF
-cmake --build build-ckm -j --target ckm ckm_unit_tests
-ctest --test-dir build-ckm/conditional_kinetic_miniapp --output-on-failure
+cmake -S .. -B build-mpi -DRIOT_BUILD_CKM=ON -DRIOT_ENABLE_UNIT_TESTS=ON -DRIOT_BUILD_PYTHON=OFF
+cmake --build build-mpi -j --target ckm ckm_unit_tests
+ctest --test-dir build-mpi/conditional_kinetic_miniapp --output-on-failure
 ```
 
 For a serial build, add `-DRIOT_ENABLE_MPI=OFF` and use a serial HDF5. All of riot's
@@ -51,7 +53,7 @@ module load gcc/12.2.0 cmake/3.26.3   # serial; add -DHDF5_ROOT=/usr for serial 
 ## Running
 
 ```bash
-build-ckm/conditional_kinetic_miniapp/src/ckm -i conditional_kinetic_miniapp/inputs/skeleton.in
+build-mpi/conditional_kinetic_miniapp/src/ckm -i inputs/skeleton.in
 ```
 
 The skeleton driver fills a tensor-train field on every mesh block and checks the

@@ -3,6 +3,17 @@
   "enabledPlugins": {
     "mattpocock-skills@claude-plugins-official": true
   },
+  "sandbox": {
+    "filesystem": {
+      "allowWrite": [
+        "../.git"
+      ],
+      "denyWrite": [
+        "../.git/hooks",
+        "../.git/config"
+      ]
+    }
+  },
   "permissions": {
     "allow": [
       "Bash(cmake *)",

@@ -44,31 +44,40 @@ template, and the AI policy below.
 
 ## Build, test, format
 
-Run these from the riot root (`cd ..`). Build directories go there as `build-ckm*`,
-which riot's `.gitignore` already ignores. Load modules **in the same shell command**
-as the build.
+Run everything from `conditional_kinetic_miniapp/`.
+
+- **Source.** The CMake source is the riot root (`-S ..`).
+- **Build directories.** They live **inside the miniapp** as `build-mpi/` and
+  `build-serial/`, so they stay writable under the Claude Code sandbox, which only
+  allows writes in the launch directory. Riot's `.gitignore` rule `build*/` already
+  ignores them.
+- **Modules.** Load modules **in the same shell command** as the build.
 
 ```bash
-git submodule update --init --recursive \
+git -C .. submodule update --init --recursive \
   external/parthenon external/kokkos-kernels external/singularity-eos external/singularity-opac
 
 # Darwin, MPI (default):
 module load openmpi/3.1.6-gcc_12.2.0 hdf5/1.12.2 cmake/3.26.3 && \
-cmake -S . -B build-ckm-mpi -G Ninja -DRIOT_BUILD_CKM=ON -DRIOT_ENABLE_UNIT_TESTS=ON \
+cmake -S .. -B build-mpi -G Ninja -DRIOT_BUILD_CKM=ON -DRIOT_ENABLE_UNIT_TESTS=ON \
   -DRIOT_BUILD_PYTHON=OFF && \
-cmake --build build-ckm-mpi -j 32 --target ckm ckm_unit_tests && \
-ctest --test-dir build-ckm-mpi/conditional_kinetic_miniapp --output-on-failure
+cmake --build build-mpi -j 32 --target ckm ckm_unit_tests && \
+ctest --test-dir build-mpi/conditional_kinetic_miniapp --output-on-failure
 
 # Darwin, serial: also pass -DRIOT_ENABLE_MPI=OFF -DHDF5_ROOT=/usr
 module load gcc/12.2.0 cmake/3.26.3 && \
-cmake -S . -B build-ckm-serial -G Ninja -DRIOT_BUILD_CKM=ON -DRIOT_ENABLE_UNIT_TESTS=ON \
+cmake -S .. -B build-serial -G Ninja -DRIOT_BUILD_CKM=ON -DRIOT_ENABLE_UNIT_TESTS=ON \
   -DRIOT_BUILD_PYTHON=OFF -DRIOT_ENABLE_MPI=OFF -DHDF5_ROOT=/usr
 
 # Format check of ckm C++ (clang-format 20, riot's config):
-module load clang/20.1.8 && git ls-files -co --exclude-standard \
-  'conditional_kinetic_miniapp/*.cpp' 'conditional_kinetic_miniapp/*.hpp' \
+module load clang/20.1.8 && git ls-files -co --exclude-standard '*.cpp' '*.hpp' \
   | xargs -r clang-format --dry-run --Werror
 ```
+
+**Sandbox.** The shared `.claude/settings.json` gives sandboxed commands write
+access to the repo's `../.git`, so `git add`/`git commit` work. `../.git/hooks` and
+`../.git/config` stay write-protected, because code written there would run outside
+the sandbox. Do not try to work around that.
 
 - **Requirements:** C++20 (required by the tensor-train branch), CMake 3.26 or newer,
   and HDF5. ckm refuses `RIOT_ENABLE_HDF5=OFF`.

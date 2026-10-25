@@ -22,22 +22,27 @@ Fetching the submodules
 
 .. code-block:: bash
 
-   git submodule update --init --recursive \
+   git -C .. submodule update --init --recursive \
      external/parthenon external/kokkos-kernels external/singularity-eos external/singularity-opac
 
 Configuring and building
 ------------------------
 
-Run these from the riot root:
+Run these from ``conditional_kinetic_miniapp/``:
+
+* **Source.** The CMake source is the riot root (``-S ..``).
+* **Build directories.** They go inside the miniapp (``build-mpi/``,
+  ``build-serial/``). Riot's ``.gitignore`` rule ``build*/`` already ignores them,
+  and they stay writable under the Claude Code sandbox.
 
 .. code-block:: bash
 
-   cmake -S . -B build-ckm -DRIOT_BUILD_CKM=ON -DRIOT_ENABLE_UNIT_TESTS=ON -DRIOT_BUILD_PYTHON=OFF
-   cmake --build build-ckm -j --target ckm ckm_unit_tests
-   ctest --test-dir build-ckm/conditional_kinetic_miniapp --output-on-failure
+   cmake -S .. -B build-mpi -DRIOT_BUILD_CKM=ON -DRIOT_ENABLE_UNIT_TESTS=ON -DRIOT_BUILD_PYTHON=OFF
+   cmake --build build-mpi -j --target ckm ckm_unit_tests
+   ctest --test-dir build-mpi/conditional_kinetic_miniapp --output-on-failure
 
 If you leave out ``--target``, riot itself is built too. Riot's own tests then run
-with ``ctest --test-dir build-ckm``.
+with ``ctest --test-dir build-mpi``.
 
 .. note::
 
@@ -68,12 +73,12 @@ These are the modules riot's Darwin CI uses:
 
    # MPI (default): hdf5/1.12.2 is parallel when loaded with openmpi
    module load openmpi/3.1.6-gcc_12.2.0 hdf5/1.12.2 cmake/3.26.3
-   cmake -S . -B build-ckm-mpi -G Ninja -DRIOT_BUILD_CKM=ON -DRIOT_ENABLE_UNIT_TESTS=ON \
+   cmake -S .. -B build-mpi -G Ninja -DRIOT_BUILD_CKM=ON -DRIOT_ENABLE_UNIT_TESTS=ON \
      -DRIOT_BUILD_PYTHON=OFF
 
    # Serial: use the system's serial HDF5
    module load gcc/12.2.0 cmake/3.26.3
-   cmake -S . -B build-ckm-serial -G Ninja -DRIOT_BUILD_CKM=ON -DRIOT_ENABLE_UNIT_TESTS=ON \
+   cmake -S .. -B build-serial -G Ninja -DRIOT_BUILD_CKM=ON -DRIOT_ENABLE_UNIT_TESTS=ON \
      -DRIOT_BUILD_PYTHON=OFF -DRIOT_ENABLE_MPI=OFF -DHDF5_ROOT=/usr
 
 Running
@@ -81,7 +86,7 @@ Running
 
 .. code-block:: bash
 
-   build-ckm/conditional_kinetic_miniapp/src/ckm -i conditional_kinetic_miniapp/inputs/skeleton.in
+   build-mpi/conditional_kinetic_miniapp/src/ckm -i inputs/skeleton.in
 
 The skeleton driver fills one tensor-train field on every mesh block and checks the
 result. On success it prints ``ckm: tensor-train check on N blocks: PASS``.
