@@ -12,6 +12,17 @@
         "../.git/hooks",
         "../.git/config"
       ]
+    },
+    "network": {
+      "allowedDomains": [
+        "github.com",
+        "*.github.com",
+        "api.github.com",
+        "codeload.github.com",
+        "objects.githubusercontent.com",
+        "pypi.org",
+        "files.pythonhosted.org"
+      ]
     }
   },
   "permissions": {

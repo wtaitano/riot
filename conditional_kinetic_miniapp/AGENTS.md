@@ -79,6 +79,11 @@ access to the repo's `../.git`, so `git add`/`git commit` work. `../.git/hooks` 
 `../.git/config` stay write-protected, because code written there would run outside
 the sandbox. Do not try to work around that.
 
+**Network.** The sandbox allows only github.com (submodules, the forks, and the API)
+and PyPI (for the docs build). Anything else prompts the human. SSH is not available
+inside the sandbox, because `~/.ssh` is hidden. Fetch over HTTPS from the `ckm` and
+`upstream` remotes. **Pushing is always done by a human, outside the agent.**
+
 - **Requirements:** C++20 (required by the tensor-train branch), CMake 3.26 or newer,
   and HDF5. ckm refuses `RIOT_ENABLE_HDF5=OFF`.
 - **Targets.** Build only `ckm ckm_unit_tests` unless you changed riot files. A full
