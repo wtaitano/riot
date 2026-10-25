@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "enabledPlugins": {
+    "mattpocock-skills@claude-plugins-official": true
+  },
+  "permissions": {
+    "allow": [
+      "Bash(cmake *)",
+      "Bash(ninja *)",
+      "Bash(make *)",
+      "Bash(ctest *)",
+      "Bash(module load *)",
+      "Bash(module list)",
+      "Bash(mpirun *)",
+      "Bash(srun *)",
+      "Bash(timeout *)",
+      "Bash(clang-format *)",
+      "Bash(black *)",
+      "Bash(script/setup.sh)",
+      "Bash(script/check_boundary.sh)",
+      "Bash(./script/setup.sh)",
+      "Bash(./script/check_boundary.sh)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git branch *)",
+      "Bash(git switch *)",
+      "Bash(git fetch *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git mv *)",
+      "Bash(git ls-files *)",
+      "Bash(git submodule status *)",
+      "Bash(git rev-parse *)"
+    ],
+    "ask": [
+      "Bash(git push *)",
+      "Bash(git merge *)",
+      "Bash(git rebase *)",
+      "Bash(git reset *)"
+    ],
+    "deny": [
+      "Bash(git push upstream *)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Read(~/.ssh/**)",
+      "Read(~/.config/gh/**)",
+      "Read(~/.netrc)",
+      "Read(~/.git-credentials)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard_edit.sh",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard_git.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
