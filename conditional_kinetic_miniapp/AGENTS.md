@@ -12,53 +12,77 @@ the session starts here.
 
 ## What ckm is
 
-ckm is a standalone Parthenon application inside the riot repository. It is built on
-the tensor-train branch of Parthenon (`external/parthenon`, PR #1464). All code lives
-in namespace `ckm`. The executable is `ckm` and the library is `ckmlib`. Build options
-are named `CKM_*`. See `README.md` and `doc/sphinx/`.
+ckm is a Parthenon application developed inside riot on a long-lived feature branch
+(`wtaitano/ckm`).
 
-## Isolation rules (hard requirements)
+- **Build.** It is built as part of riot with `-DRIOT_BUILD_CKM=ON`.
+- **Parthenon.** It uses riot's own `external/parthenon`. On the feature branch that
+  submodule points at the tensor-train branch (`lroberts36/tt-cross`, Parthenon PR
+  #1464).
+- **Names.** All code lives in namespace `ckm`. The executable is `ckm` and the
+  library is `ckmlib`.
+- **More detail.** See `README.md` and `doc/sphinx/`.
 
-1. **Never** include, link, or reference riot's `../src/`, `../external/`, `../tst/`,
-   `riotlib`, `riot::`, or `RIOT_*` from ckm code or CMake. ckm writes its own
-   physics; do not port or wrap riot's physics packages.
-2. **Never** edit files outside `conditional_kinetic_miniapp/`. The only exceptions are
-   `../.gitmodules`, `../.github/CODEOWNERS`, and `../.github/workflows/ckm.yml`, and
-   only when the task requires them.
-3. Run `script/check_boundary.sh` before reporting work as done. CI runs it too.
+## Isolation rules
 
-Tooling and process are inherited from riot, and you should use them: riot's
-`../script/format.sh`, `../.clang-format`, the PR template, and the AI policy below.
+1. **Riot must never depend on ckm.** Do not edit riot files to include, link, or call
+   ckm. You may edit files outside `conditional_kinetic_miniapp/` only to wire ckm in,
+   and only these: `../.gitmodules`, `../CMakeLists.txt` (the `RIOT_BUILD_CKM`
+   option), `../.github/CODEOWNERS`, and `../.github/workflows/ckm.yml`.
+   `script/check_boundary.sh` enforces this, and CI runs it.
+2. **ckm may use riot.**
+   - **Utilities** from `../src/` are fine. Self-contained headers such as
+     `riot_utils/type_maps.hpp` can be included directly. Anything that needs riot's
+     variables or packages means linking `riotlib`.
+   - **Physics packages:** do not reuse riot's (hydro, radiation, materials, ...).
+     ckm writes its own. If reusing one seems worthwhile, ask the human first.
+3. **No dependency copies.** ckm has no submodules of its own. It uses riot's
+   `../external/` (Parthenon, Kokkos, Catch2).
+
+Tooling and process are riot's: `../script/format.sh`, `../.clang-format`, the PR
+template, and the AI policy below.
 
 ## Build, test, format
 
+Run these from the riot root (`cd ..`). Build directories go there as `build-ckm*`,
+which riot's `.gitignore` already ignores. Load modules **in the same shell command**
+as the build.
+
 ```bash
-script/setup.sh                       # fetch ckm submodules (once, and after pin bumps)
+git submodule update --init --recursive \
+  external/parthenon external/kokkos-kernels external/singularity-eos external/singularity-opac
 
 # Darwin, MPI (default):
-module load openmpi/3.1.6-gcc_12.2.0 hdf5/1.12.2 cmake/3.26.3
-cmake -S . -B ../build-ckm -G Ninja -DCKM_ENABLE_UNIT_TESTS=ON
-cmake --build ../build-ckm -j 32
-ctest --test-dir ../build-ckm --output-on-failure
+module load openmpi/3.1.6-gcc_12.2.0 hdf5/1.12.2 cmake/3.26.3 && \
+cmake -S . -B build-ckm-mpi -G Ninja -DRIOT_BUILD_CKM=ON -DRIOT_ENABLE_UNIT_TESTS=ON \
+  -DRIOT_BUILD_PYTHON=OFF && \
+cmake --build build-ckm-mpi -j 32 --target ckm ckm_unit_tests && \
+ctest --test-dir build-ckm-mpi/conditional_kinetic_miniapp --output-on-failure
 
-# Darwin, serial:
-module load gcc/12.2.0 cmake/3.26.3
-cmake -S . -B ../build-ckm-serial -G Ninja -DCKM_ENABLE_MPI=OFF \
-  -DCKM_ENABLE_UNIT_TESTS=ON -DHDF5_ROOT=/usr
+# Darwin, serial: also pass -DRIOT_ENABLE_MPI=OFF -DHDF5_ROOT=/usr
+module load gcc/12.2.0 cmake/3.26.3 && \
+cmake -S . -B build-ckm-serial -G Ninja -DRIOT_BUILD_CKM=ON -DRIOT_ENABLE_UNIT_TESTS=ON \
+  -DRIOT_BUILD_PYTHON=OFF -DRIOT_ENABLE_MPI=OFF -DHDF5_ROOT=/usr
 
-# Format: riot's script runs clang-format 20 and black over the whole repo
-# (black must be on PATH), from the repo root:
-module load clang/20.1.8 && (cd .. && ./script/format.sh)
-# Quick check of ckm C++ only, without black:
-git ls-files '*.cpp' '*.hpp' | grep -v '^external/' | xargs clang-format --dry-run --Werror
+# Format check of ckm C++ (clang-format 20, riot's config):
+module load clang/20.1.8 && git ls-files -co --exclude-standard \
+  'conditional_kinetic_miniapp/*.cpp' 'conditional_kinetic_miniapp/*.hpp' \
+  | xargs -r clang-format --dry-run --Werror
 ```
 
-- **Requirements:** C++20 (required by the TT branch), CMake 3.26 or newer, and HDF5,
-  which is required. With MPI on, HDF5 must be parallel.
-- **Build directories** go at the riot root as `../build-ckm*`. Riot's `.gitignore`
-  already ignores `build*/`.
-- **Before you report a change as done:** it builds in both serial and MPI, `ctest`
-  passes in both, and `script/check_boundary.sh` passes.
+- **Requirements:** C++20 (required by the tensor-train branch), CMake 3.26 or newer,
+  and HDF5. ckm refuses `RIOT_ENABLE_HDF5=OFF`.
+- **Targets.** Build only `ckm ckm_unit_tests` unless you changed riot files. A full
+  riot build takes much longer.
+- **Serial builds and `riotlib`.** Riot's own `riotlib` does **not** compile with
+  `RIOT_ENABLE_MPI=OFF`; this is a problem on riot `main` too, not caused by ckm. The
+  serial ckm build works only while `ckmlib` does not link `riotlib`. If you need a
+  riot utility that comes through `riotlib`, ask the human first, because it would
+  make ckm MPI-only until riot fixes its serial build.
+- **If you touched a riot file** (one of the wiring files above), also build `riot`
+  and run riot's unit tests.
+- **Before you report a change as done:** serial and MPI both build, `ctest` passes in
+  both, and `conditional_kinetic_miniapp/script/check_boundary.sh` passes.
 
 ## Code conventions
 
@@ -66,13 +90,13 @@ git ls-files '*.cpp' '*.hpp' | grep -v '^external/' | xargs clang-format --dry-r
 - Every new source file gets riot's copyright header (`../script/format.sh` adds it)
   and the line `This file was made in part with generative AI.` if an agent wrote any
   of it.
-- New unit tests go in `tst/unit/`, added to the source list in
+- New unit tests go in `tst/unit/` and must be added to the source list in
   `tst/unit/CMakeLists.txt`. Use Catch2 v3 headers (`<catch2/catch_test_macros.hpp>`)
   and the `GIVEN`/`WHEN`/`THEN` style.
 - New sources go in `src/CMakeLists.txt` `SRC_LIST`, in alphabetical order.
-- Tensor trains: hold them through `std::shared_ptr<TensorTrain>` and avoid copies
-  (they have reference semantics). Read
-  `external/parthenon/doc/sphinx/src/tensor_trains.rst` before touching TT code.
+- Tensor trains have reference semantics. Hold them through
+  `std::shared_ptr<TensorTrain>` and avoid copies. Read
+  `../external/parthenon/doc/sphinx/src/tensor_trains.rst` before touching TT code.
 
 ## AI-assisted coding policy (riot's, unchanged)
 
@@ -81,33 +105,36 @@ The policy is riot's
 "AI-assisted coding":
 
 - **Disclaimer.** Add a disclaimer comment to every file an agent helped write.
-- **Plan file.** For agentic work, write the plan to `plan_histories/`. Name it after
-  the **internal fork PR number**, as `plan_histories/ckm-fork-pr-<N>.md`. Use a
-  descriptive name until the number is known, then rename it.
-- **Ownership.** The human who submits the PR owns and must understand the code.
-- **Size.** Keep changes reviewable. Prefer several small PRs over one large one.
+- **Plan file.** For agentic work, write the plan to `plan_histories/`, named after
+  the **internal fork PR number** as `plan_histories/ckm-fork-pr-<N>.md`. Use a
+  descriptive name until the number is known.
+- **Ownership.** The human who submits the PR owns the code and must understand it.
+- **Size.** Keep each change small enough to review. Riot's developers asked for
+  frequent, small sub-PRs into the feature branch so the history stays readable.
 
 ## Git workflow
 
-- **Integration branch.** ckm is developed on `wtaitano/ckm` on the `wtaitano/riot`
-  fork, and merged into `lanl/riot` as one final PR.
-- **Topic branches.** Name topic branches `<github-user>/ckm-<topic>`. Open PRs into
-  `wtaitano/riot:wtaitano/ckm`, **never** into `lanl/riot`.
+- **Feature branch.** ckm is developed on `wtaitano/ckm` on the `wtaitano/riot` fork,
+  and merged into `lanl/riot` as one final PR.
+- **Sub-PRs.** Each topic branch, `<github-user>/ckm-<topic>`, becomes a sub-PR into
+  `wtaitano/riot:wtaitano/ckm`, **never** into `lanl/riot`. Merge sub-PRs often. If a
+  review is pending, stack the next PR on the previous branch.
 - **Remotes.** `origin` is your fork. `ckm` and `upstream` are fetch-only. Set them up
   with `script/setup_remotes.sh <you>`.
 - **Never rewrite shared history.** Do not rebase, force-push, or reset
-  `wtaitano/ckm` or `main`. Riot changes come in with `git merge upstream/main`.
+  `wtaitano/ckm` or `main`. Bring in riot changes with `git merge upstream/main`.
   Rebasing your own unmerged topic branch is fine.
-- **Merges.** Merge commits only (no squash or rebase merges). `git pull` must not
+- **Merges.** Merge commits only, with no squash or rebase merges. `git pull` must not
   rebase (`pull.rebase=false`, `pull.ff=only`).
-- **Push and PRs.** Agents commit locally. A human decides when to push and when to
-  open a PR.
+- **Pushing.** Agents commit locally. A human decides when to push and when to open a
+  PR.
 
 ## Pointers
 
-- `README.md`: overview, options, and layout.
+- `README.md`: overview and layout.
 - `doc/sphinx/src/building.rst`, `contributing.rst`, `maintainers.rst`.
-- `plan_histories/`: past agent plans.
+- `plan_histories/`: past agent plans, including why the design changed after riot
+  review (`ckm-shared-parthenon.md`).
 - `.claude/`: shared Claude Code settings, hooks, agents (`ckm-implementer`,
-  `ckm-reviewer`), and skills (`ckm-setup`, `ckm-build`, `ckm-test`, `ckm-format`,
+  `ckm-reviewer`), and skills (`ckm-build`, `ckm-test`, `ckm-format`,
   `ckm-plan-history`).

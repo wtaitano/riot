@@ -25,6 +25,7 @@ CKM_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
 REPO=$(cd "${CKM_DIR}/.." && pwd -P)
 ALLOWED_ROOT_FILES=(
   .gitmodules
+  CMakeLists.txt
   .github/CODEOWNERS
   .github/workflows/ckm.yml
 )

@@ -16,9 +16,7 @@
       "Bash(timeout *)",
       "Bash(clang-format *)",
       "Bash(black *)",
-      "Bash(script/setup.sh)",
       "Bash(script/check_boundary.sh)",
-      "Bash(./script/setup.sh)",
       "Bash(./script/check_boundary.sh)",
       "Bash(git status *)",
       "Bash(git diff *)",
@@ -32,7 +30,9 @@
       "Bash(git mv *)",
       "Bash(git ls-files *)",
       "Bash(git submodule status *)",
-      "Bash(git rev-parse *)"
+      "Bash(git rev-parse *)",
+      "Bash(conditional_kinetic_miniapp/script/check_boundary.sh)",
+      "Bash(git submodule update --init --recursive *)"
     ],
     "ask": [
       "Bash(git push *)",

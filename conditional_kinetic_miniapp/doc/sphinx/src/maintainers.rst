@@ -117,22 +117,31 @@ From the owner's clone, where ``origin`` is ``wtaitano/riot``:
    git push
 
 Then open a PR into ``wtaitano/ckm`` like any other change. Because ckm is isolated,
-conflicts should only appear in ``.gitmodules``, ``.github/CODEOWNERS``, or
-``.github/workflows/ckm.yml``.
+conflicts should only appear in the riot wiring files (``.gitmodules``,
+``CMakeLists.txt``, ``.github/CODEOWNERS``, ``.github/workflows/ckm.yml``) or in the
+``external/parthenon`` pin.
+
+If riot bumps its own Parthenon, keep the feature branch on the tensor-train
+branch. If riot's new pin is newer than the tensor-train branch's base, ask the
+branch author to merge or rebase onto it, then bump our pin as below.
 
 Bumping the Parthenon pin
 -------------------------
 
+On the feature branch, riot's ``external/parthenon`` tracks ``lroberts36/tt-cross``
+(``branch =`` in ``.gitmodules``) but is pinned to a SHA, so it only moves when we
+choose. Run from the riot root:
+
 .. code-block:: bash
 
-   cd conditional_kinetic_miniapp/external/parthenon
-   git fetch origin <tag-or-sha> && git checkout <tag-or-sha>
-   git submodule update --init --recursive
-   cd - && git add conditional_kinetic_miniapp/external/parthenon
+   git submodule update --remote external/parthenon   # latest tt-cross; or check out a tag/SHA inside it
+   git -C external/parthenon submodule update --init --recursive
+   git add external/parthenon
 
-Build and run the tests in both serial and MPI before opening the PR. Prefer a tag in
-``parthenon-hpc-lab/parthenon``. Commits on a PR branch can disappear if the branch is
-force-pushed.
+Before opening the PR, build and test **both riot and ckm**, in serial and MPI. This
+pin is what riot itself builds against on this branch. Prefer a tag in
+``parthenon-hpc-lab/parthenon``, because commits on a PR branch can disappear if that
+branch is force-pushed.
 
 The final PR into lanl/riot
 ---------------------------
