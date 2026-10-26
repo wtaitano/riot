@@ -78,9 +78,13 @@ Making a change
 .. code-block:: bash
 
    git fetch ckm
-   git switch -c <you>/ckm-<topic> ckm/wtaitano/ckm
+   git switch -c <you>/ckm-<topic> --no-track ckm/wtaitano/ckm
    # ... edit, build, test, commit ...
-   git push                     # goes to your fork
+   git push                     # goes to your fork, and sets up tracking there
+
+Use ``--no-track``. Without it the new branch tracks the fetch-only ``ckm`` remote, and
+the first ``git push`` fails with "Please make sure you have the correct access
+rights".
 
 Open a PR from ``<you>/riot:<you>/ckm-<topic>`` into
 ``wtaitano/riot:wtaitano/ckm``. A PR needs these before it can merge:

@@ -9,6 +9,49 @@ on the feature branch that submodule points at the tensor-train branch of Parthe
 
 This file was made in part with generative AI.
 
+## Getting started (one time, about ten minutes)
+
+Do these once, in order. After that, `git pull` keeps everything current.
+
+0. **Check the machine** (30 seconds). From a clone of the repo, run
+   `conditional_kinetic_miniapp/script/check_env.sh`. If it reports a problem with the
+   temp directory, set what it prints (`CLAUDE_CODE_TMPDIR` and `TMPDIR`), because
+   otherwise Claude Code's Bash tool will not start. Details are in `AGENTS.md`.
+1. **SSH key on GitHub.** `ssh -T git@github.com` should greet you by your username. If
+   not, add your public key at GitHub → Settings → SSH and GPG keys. Pushing needs
+   this, and Claude cannot do it for you.
+2. **Fork** [`lanl/riot`](https://github.com/lanl/riot) on GitHub.
+3. **Clone your fork and switch to the ckm branch:**
+   ```bash
+   git clone git@github.com:<you>/riot.git && cd riot
+   git fetch https://github.com/wtaitano/riot.git wtaitano/ckm
+   git switch -c wtaitano/ckm FETCH_HEAD
+   ```
+4. **Set up the remotes** (`origin` = your fork; `ckm` and `upstream` are fetch-only):
+   ```bash
+   conditional_kinetic_miniapp/script/setup_remotes.sh <you>
+   git fetch ckm
+   ```
+5. **Fetch the dependencies** (Parthenon, Kokkos, Catch2, ...):
+   ```bash
+   git submodule update --init --recursive \
+     external/parthenon external/kokkos-kernels external/singularity-eos external/singularity-opac
+   ```
+6. **Start Claude Code from the miniapp** with the sandbox on:
+   `cd conditional_kinetic_miniapp && claude`. Accept the workspace-trust prompt and the
+   `mattpocock-skills` plugin prompt. Check `/agents` (expect `ckm-implementer` and
+   `ckm-reviewer`) and `/hooks` (expect two PreToolUse hooks).
+7. **Build and test** once, using the commands in [Building](#building) below.
+
+For each change, make a topic branch **with `--no-track`** and open a PR into
+`wtaitano/riot:wtaitano/ckm`:
+```bash
+git fetch ckm
+git switch -c <you>/ckm-<topic> --no-track ckm/wtaitano/ckm
+```
+The full workflow is in `doc/sphinx/src/contributing.rst`. `gh` (the GitHub CLI) is
+optional; the GitHub web page works for opening PRs.
+
 ## Isolation rules
 
 - **riot never depends on ckm.** No file outside this directory references ckm,
