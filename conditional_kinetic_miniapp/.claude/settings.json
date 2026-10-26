@@ -3,6 +3,28 @@
   "enabledPlugins": {
     "mattpocock-skills@claude-plugins-official": true
   },
+  "sandbox": {
+    "filesystem": {
+      "allowWrite": [
+        "../.git"
+      ],
+      "denyWrite": [
+        "../.git/hooks",
+        "../.git/config"
+      ]
+    },
+    "network": {
+      "allowedDomains": [
+        "github.com",
+        "*.github.com",
+        "api.github.com",
+        "codeload.github.com",
+        "objects.githubusercontent.com",
+        "pypi.org",
+        "files.pythonhosted.org"
+      ]
+    }
+  },
   "permissions": {
     "allow": [
       "Bash(cmake *)",
@@ -16,9 +38,7 @@
       "Bash(timeout *)",
       "Bash(clang-format *)",
       "Bash(black *)",
-      "Bash(script/setup.sh)",
       "Bash(script/check_boundary.sh)",
-      "Bash(./script/setup.sh)",
       "Bash(./script/check_boundary.sh)",
       "Bash(git status *)",
       "Bash(git diff *)",
@@ -32,7 +52,8 @@
       "Bash(git mv *)",
       "Bash(git ls-files *)",
       "Bash(git submodule status *)",
-      "Bash(git rev-parse *)"
+      "Bash(git rev-parse *)",
+      "Bash(conditional_kinetic_miniapp/script/check_boundary.sh)"
     ],
     "ask": [
       "Bash(git push *)",

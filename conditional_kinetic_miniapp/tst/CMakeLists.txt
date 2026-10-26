@@ -16,7 +16,7 @@ add_subdirectory(unit)
 
 # End-to-end run of the ckm driver on the skeleton input deck.
 add_test(NAME ckm_skeleton_run
-  COMMAND ckm -i ${PROJECT_SOURCE_DIR}/inputs/skeleton.in
+  COMMAND ckm -i ${CMAKE_CURRENT_SOURCE_DIR}/../inputs/skeleton.in
   WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
 )
 set_tests_properties(ckm_skeleton_run PROPERTIES

@@ -22,9 +22,13 @@ Get the change with `git diff` (staged plus unstaged) or
    `TensorCoreHost`, a train used after an in-place op reshaped it, and open trains
    passed to ops that need closed ones.
 3. **Isolation boundary.**
-   - No references to riot's `src/`, `external/`, `riotlib`, `riot::`, or `RIOT_*`.
-   - No edits outside `conditional_kinetic_miniapp/` except the three allowed root
-     files.
+   - Riot never depends on ckm: no riot file includes, links, or calls ckm.
+   - Riot's `src/` utilities may be used, but riot physics packages may not be reused
+     without the human's agreement.
+   - No edits outside `conditional_kinetic_miniapp/` except the four riot wiring
+     files (`.gitmodules`, `CMakeLists.txt`, `.github/CODEOWNERS`,
+     `.github/workflows/ckm.yml`). If one of them changed, check that riot still
+     builds with `RIOT_BUILD_CKM=OFF`.
    - Run `script/check_boundary.sh`.
 4. **Tests.** New behavior has Catch2 tests in `tst/unit/`, and new tests are listed in
    `tst/unit/CMakeLists.txt`.

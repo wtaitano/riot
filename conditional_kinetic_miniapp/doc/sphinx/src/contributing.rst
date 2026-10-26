@@ -13,19 +13,20 @@ something is not listed here, riot's rule applies.
 Differences from riot
 ---------------------
 
-* **Isolation.**
+* **Isolation is one-way.**
 
-  * ckm code and build files never reference riot's ``src/``, ``external/``, or
-    physics packages.
-  * Files outside ``conditional_kinetic_miniapp/`` never reference ckm. The
-    exceptions are ``.gitmodules``, ``.github/CODEOWNERS``, and
-    ``.github/workflows/ckm.yml``.
-  * ``script/check_boundary.sh`` enforces both directions in CI.
+  * Riot never depends on ckm. Files outside ``conditional_kinetic_miniapp/`` never
+    reference ckm, except the files that wire it in: ``.gitmodules``,
+    ``CMakeLists.txt`` (the off-by-default ``RIOT_BUILD_CKM`` option),
+    ``.github/CODEOWNERS``, and ``.github/workflows/ckm.yml``.
+  * ckm may use riot's ``src/`` utilities and build targets. It does not reuse
+    riot's physics packages; the ckm team writes its own.
+  * ``script/check_boundary.sh`` enforces this in CI.
 
-* **Dependencies.** ckm has its own Parthenon (tensor-train branch) and Catch2
-  submodules under ``conditional_kinetic_miniapp/external/``. Fetch them with
-  ``script/setup.sh``.
-* **Build.** ckm is a standalone CMake project with ``CKM_*`` options, and HDF5 is
+* **Dependencies.** ckm uses riot's ``external/`` and has no submodules of its own.
+  On the feature branch, riot's ``external/parthenon`` points at the tensor-train
+  branch of Parthenon.
+* **Build.** ckm is built as part of riot with ``-DRIOT_BUILD_CKM=ON``. HDF5 is
   required. See :doc:`building`.
 * **Namespace.** All ckm code is in namespace ``ckm``.
 * **Plan histories.**
@@ -58,9 +59,11 @@ One-time setup
    .. code-block:: bash
 
       git clone git@github.com:<you>/riot.git && cd riot
+      git fetch https://github.com/wtaitano/riot.git wtaitano/ckm && git switch -c wtaitano/ckm FETCH_HEAD
       conditional_kinetic_miniapp/script/setup_remotes.sh <you>
       git fetch ckm
-      conditional_kinetic_miniapp/script/setup.sh
+      git submodule update --init --recursive \
+        external/parthenon external/kokkos-kernels external/singularity-eos external/singularity-opac
 
    This gives you the following remotes:
 
@@ -68,7 +71,9 @@ One-time setup
    * ``ckm``: ``wtaitano/riot``, fetch only.
    * ``upstream``: ``lanl/riot``, fetch only.
 
-   It also sets ``pull.rebase=false`` and ``pull.ff=only``.
+   It also sets ``pull.rebase=false`` and ``pull.ff=only``. Run these in a normal
+   shell, not from Claude Code: the sandbox keeps ``.git/config`` read-only, and both
+   ``setup_remotes.sh`` and the submodule fetch write it.
 
 Making a change
 ~~~~~~~~~~~~~~~
@@ -76,9 +81,13 @@ Making a change
 .. code-block:: bash
 
    git fetch ckm
-   git switch -c <you>/ckm-<topic> ckm/wtaitano/ckm
+   git switch -c <you>/ckm-<topic> --no-track ckm/wtaitano/ckm
    # ... edit, build, test, commit ...
-   git push                     # goes to your fork
+   git push                     # goes to your fork, and sets up tracking there
+
+Use ``--no-track``. Without it the new branch tracks the fetch-only ``ckm`` remote, and
+the first ``git push`` fails with "Please make sure you have the correct access
+rights".
 
 Open a PR from ``<you>/riot:<you>/ckm-<topic>`` into
 ``wtaitano/riot:wtaitano/ckm``. A PR needs these before it can merge:
@@ -128,15 +137,15 @@ Item                               What it does
                                    ``reset``; denies pushes to ``upstream``,
                                    force-pushes, and reading credential files
 ``hooks/guard_edit.sh``            Blocks edits outside the miniapp, except the
-                                   three allowed root files
+                                   four riot wiring files
 ``hooks/guard_git.sh``             Blocks pushes to ``lanl/riot``, force-pushes, and
                                    rebase/reset/delete of ``wtaitano/ckm`` or ``main``
 ``agents/ckm-implementer.md``      Implements a scoped change test-first, builds and
                                    tests serial and MPI, formats, writes the plan file
 ``agents/ckm-reviewer.md``         Read-only review: correctness, tensor-train
                                    semantics, isolation, conventions, AI policy
-``skills/ckm-*``                   ``ckm-setup``, ``ckm-build``, ``ckm-test``,
-                                   ``ckm-format``, ``ckm-plan-history``
+``skills/ckm-*``                   ``ckm-build``, ``ckm-test``, ``ckm-format``,
+                                   ``ckm-plan-history``
 =================================  ==================================================
 
 When you first launch ``claude`` in the miniapp, accept the workspace-trust prompt so

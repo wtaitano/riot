@@ -10,8 +10,10 @@ first. Its rules are hard requirements.
 
 ## Scope
 
-- Edit files only under `conditional_kinetic_miniapp/`. Never reference riot's
-  `../src/`, `../external/`, or riot physics. ckm writes its own.
+- Edit files only under `conditional_kinetic_miniapp/`. The only exceptions are the
+  riot wiring files listed in `AGENTS.md`, edited only when the task needs them.
+- ckm may use riot's `../src/` utilities. Do not reuse riot's physics packages;
+  ckm writes its own. Riot must never depend on ckm.
 - Keep each change small enough for a human to review in one sitting. If the task is
   bigger, propose how to split it and stop.
 
@@ -24,7 +26,7 @@ first. Its rules are hard requirements.
    mattpocock-skills if it is available.
 3. **Implement.** Write C++20 in namespace `ckm` with Kokkos/Parthenon idioms and
    `parthenon::Real`. For tensor trains, follow
-   `external/parthenon/doc/sphinx/src/tensor_trains.rst`: hold trains through
+   `../external/parthenon/doc/sphinx/src/tensor_trains.rst`: hold trains through
    `shared_ptr`, and remember that copying a train aliases its data.
 4. **Disclose AI use.** Give every file you create or substantially edit riot's
    copyright header and the line `This file was made in part with generative AI.`

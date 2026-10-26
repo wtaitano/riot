@@ -79,6 +79,7 @@ option(RIOT_BUILD_SINGULARITY "Build included version of Singularity" ON)
 option(RIOT_BUILD_PYTHON "Build Python interface" ON)
 option(RIOT_BUILD_CAD "Build support for using CAD files" OFF)
 option(RIOT_ENABLE_SANITIZE "Build with address sanitizer" OFF)
+option(RIOT_BUILD_CKM "Build the conditional kinetic miniapp (conditional_kinetic_miniapp/)" OFF)
 
 option(RIOT_ENABLE_NDI "Enable NDI for ndi2spiner tool only" OFF)
 cmake_dependent_option(RIOT_BUILD_NDI "Build included version of NDI"
@@ -430,4 +431,11 @@ if(RIOT_ENABLE_UNIT_TESTS OR RIOT_ENABLE_REGRESSION_TESTS)
     enable_testing()
     endif()
   add_subdirectory(tst)
+endif()
+
+# Conditional kinetic miniapp. Added last so it can use riot's targets and the
+# Catch2 configured above; riot itself never depends on it.
+if(RIOT_BUILD_CKM)
+  message("\nConfiguring conditional_kinetic_miniapp")
+  add_subdirectory(conditional_kinetic_miniapp)
 endif()

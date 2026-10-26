@@ -1,6 +1,8 @@
 # This file was made with the assistance of generative AI.
-# CI for the conditional kinetic miniapp (ckm). Runs only when the miniapp, its
-# submodule pins, or this workflow change, and never touches riot's own build.
+# CI for the conditional kinetic miniapp (ckm). ckm is built as part of riot
+# (RIOT_BUILD_CKM=ON) but only the ckm targets are compiled here; riot's own test
+# suite stays in unit-tests.yml. Runs when the miniapp, the riot files that wire it
+# in, the Parthenon pin, or this workflow change.
 name: ckm
 
 on:
@@ -9,6 +11,8 @@ on:
     paths:
       - "conditional_kinetic_miniapp/**"
       - ".gitmodules"
+      - "CMakeLists.txt"
+      - "external/parthenon"
       - ".github/CODEOWNERS"
       - ".github/workflows/ckm.yml"
   push:
@@ -16,6 +20,8 @@ on:
     paths:
       - "conditional_kinetic_miniapp/**"
       - ".gitmodules"
+      - "CMakeLists.txt"
+      - "external/parthenon"
       - ".github/CODEOWNERS"
       - ".github/workflows/ckm.yml"
 
@@ -71,13 +77,18 @@ jobs:
         with:
           submodules: false
 
-      - name: Initialize ckm submodules
-        run: ./conditional_kinetic_miniapp/script/setup.sh
+      - name: Initialize riot dependencies
+        run: |
+          git submodule update --init --recursive \
+            external/parthenon \
+            external/kokkos-kernels \
+            external/singularity-eos \
+            external/singularity-opac
 
-      - name: Identify ckm dependency revisions
+      - name: Identify dependency revisions
         id: dependencies
         run: |
-          echo "hash=$(git submodule status --recursive -- conditional_kinetic_miniapp | sha256sum | cut -d' ' -f1)" \
+          echo "hash=$(git submodule status --recursive | sha256sum | cut -d' ' -f1)" \
             >> "$GITHUB_OUTPUT"
 
       - name: Install Ubuntu build dependencies
@@ -95,19 +106,21 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-ckm-v1-${{ runner.os }}-${{ matrix.mode }}-${{ steps.dependencies.outputs.hash }}
+          key: ccache-ckm-v2-${{ runner.os }}-${{ matrix.mode }}-${{ steps.dependencies.outputs.hash }}
           restore-keys: |
-            ccache-ckm-v1-${{ runner.os }}-${{ matrix.mode }}-
+            ccache-ckm-v2-${{ runner.os }}-${{ matrix.mode }}-
 
       - name: Build and test
         run: |
-          cmake -S conditional_kinetic_miniapp -B build-ckm -G Ninja \
-            -DCKM_ENABLE_MPI=${{ matrix.mpi }} \
-            -DCKM_ENABLE_UNIT_TESTS=ON \
-            -DCKM_BUILD_CATCH2=OFF \
+          cmake -S . -B build -G Ninja \
+            -DRIOT_BUILD_CKM=ON \
+            -DRIOT_ENABLE_UNIT_TESTS=ON \
+            -DRIOT_ENABLE_MPI=${{ matrix.mpi }} \
+            -DRIOT_BUILD_CATCH2=OFF \
+            -DRIOT_BUILD_PYTHON=OFF \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-          cmake --build build-ckm --parallel 4
+          cmake --build build --parallel 4 --target ckm ckm_unit_tests
           ccache --show-stats
-          ctest --test-dir build-ckm --output-on-failure
+          ctest --test-dir build/conditional_kinetic_miniapp --output-on-failure
