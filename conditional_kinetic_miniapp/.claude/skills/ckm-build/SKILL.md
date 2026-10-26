@@ -12,10 +12,15 @@ the miniapp** as `build-mpi/` and `build-serial/`. That keeps them writable unde
 Claude Code sandbox, which only allows writes in the launch directory. Riot's
 `.gitignore` rule `build*/` already ignores them.
 
-**Submodules.** Fetch them once, and again after a Parthenon pin bump:
+**Submodules.** Do not fetch them yourself. `git submodule update --init` writes
+`../.git/config`, which the sandbox keeps read-only, so it fails there. Check first:
+if `../external/parthenon/CMakeLists.txt` is missing, or `git -C .. submodule status`
+shows a `-` (not fetched) or `+` (wrong commit) in front of a path you need, stop. Write
+this to `scratch/commands.txt`, with `<riot>` replaced by the absolute path of the riot
+checkout (`cd .. && pwd`), and ask the human to run it in a normal shell:
 
 ```bash
-git -C .. submodule update --init --recursive \
+cd <riot> && git submodule update --init --recursive \
   external/parthenon external/kokkos-kernels external/singularity-eos external/singularity-opac
 ```
 

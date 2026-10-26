@@ -20,6 +20,11 @@ Requirements
 Fetching the submodules
 -----------------------
 
+Run this yourself, in a normal shell, not from Claude Code. Fetching submodules writes
+``.git/config``, which the Claude Code sandbox keeps read-only, so it fails there with
+``could not lock config file``. Run it once per clone, and again after a submodule pin
+changes.
+
 .. code-block:: bash
 
    git -C .. submodule update --init --recursive \

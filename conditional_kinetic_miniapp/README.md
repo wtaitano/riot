@@ -32,7 +32,9 @@ Do these once, in order. After that, `git pull` keeps everything current.
    conditional_kinetic_miniapp/script/setup_remotes.sh <you>
    git fetch ckm
    ```
-5. **Fetch the dependencies** (Parthenon, Kokkos, Catch2, ...):
+5. **Fetch the dependencies** (Parthenon, Kokkos, Catch2, ...) in a normal shell, not from
+   Claude. The sandbox keeps `.git/config` read-only, so Claude cannot do this step.
+   Run it again whenever a submodule pin changes (Claude will ask):
    ```bash
    git submodule update --init --recursive \
      external/parthenon external/kokkos-kernels external/singularity-eos external/singularity-opac
@@ -75,10 +77,9 @@ is the riot root (`..`), and build directories (`build-*`) go here, where riot's
 branch), CMake 3.26 or newer, and HDF5. MPI is on by default, and with MPI on, HDF5
 must be parallel.
 
-```bash
-git -C .. submodule update --init --recursive \
-  external/parthenon external/kokkos-kernels external/singularity-eos external/singularity-opac
+Fetch the submodules first, outside Claude (Getting started, step 5). Then:
 
+```bash
 cmake -S .. -B build-mpi -DRIOT_BUILD_CKM=ON -DRIOT_ENABLE_UNIT_TESTS=ON -DRIOT_BUILD_PYTHON=OFF
 cmake --build build-mpi -j --target ckm ckm_unit_tests
 ctest --test-dir build-mpi/conditional_kinetic_miniapp --output-on-failure

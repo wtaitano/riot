@@ -55,11 +55,16 @@ Run everything from `conditional_kinetic_miniapp/`.
   pipe `module load` (for example `module load ... | head`). The pipe runs it in a
   subshell, so nothing gets loaded and no error is printed. `module load` works
   inside the sandbox.
+- **Submodules are a human step.** `git submodule update --init` must write
+  `../.git/config`, which the sandbox keeps read-only, so it fails inside the sandbox
+  with `could not lock config file`. The human runs it outside Claude (README "Getting
+  started", step 5), once per clone and again after a submodule pin changes. If
+  `../external/parthenon/CMakeLists.txt` is missing or `git -C .. submodule status`
+  shows a `-` or `+` in front of a path, do not run it yourself and do not retry it
+  unsandboxed. Write the command to `scratch/commands.txt` (see "Pushing" under Git
+  workflow) and ask the human to run it.
 
 ```bash
-git -C .. submodule update --init --recursive \
-  external/parthenon external/kokkos-kernels external/singularity-eos external/singularity-opac
-
 # Darwin, MPI (default):
 module load openmpi/3.1.6-gcc_12.2.0 hdf5/1.12.2 cmake/3.26.3 && \
 cmake -S .. -B build-mpi -G Ninja -DRIOT_BUILD_CKM=ON -DRIOT_ENABLE_UNIT_TESTS=ON \

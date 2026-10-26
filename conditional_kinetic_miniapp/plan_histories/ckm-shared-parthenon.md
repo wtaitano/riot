@@ -86,3 +86,26 @@ PR changes the design on top of them.
   `ckm-build` skill.
 - **Other checks:** `check_boundary.sh` passes; the docs build with `-W -n`;
   `ckm.yml` parses; clang-format 20 is clean.
+
+## Follow-up: submodule fetch is a human step under the sandbox
+
+- **Finding.** The shared sandbox settings keep `../.git/config` read-only (on
+  purpose: code configured there runs outside the sandbox). Every git command that
+  writes it therefore fails inside the sandbox with `could not lock config file`:
+  `git submodule update --init`, `git push -u`, `git branch --track`, and
+  `git worktree add`/`prune`. Commit, `switch -c --no-track`, and HTTPS fetch work.
+- **Decision (agreed with the ckm lead).** Keep `config` protected and make the
+  submodule fetch a one-time human step, run in a normal shell. The rejected
+  alternative was `sandbox.excludedCommands: ["git submodule *"]`. It runs every
+  `git submodule` command with full access (`git submodule foreach` is an arbitrary
+  unsandboxed shell). It also matches only the bare command, not `git -C ..` or `&&`
+  chains, and admin-required sandboxes ignore repository `excludedCommands`.
+- **Changes.**
+  - The submodule command is removed from Claude's build instructions (`AGENTS.md`,
+    the `ckm-build` skill) and from the `settings.json` allowlist.
+  - Agents now check `git submodule status` and ask the human through
+    `scratch/commands.txt`.
+  - `README.md`, `building.rst`, `contributing.rst` and `maintainers.rst` say to run
+    it outside Claude.
+- **Verification.** `check_boundary.sh` passes; the docs build with `-W -n`;
+  `settings.json` parses.

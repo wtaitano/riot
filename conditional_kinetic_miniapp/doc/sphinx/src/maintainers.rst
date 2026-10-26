@@ -130,7 +130,8 @@ Bumping the Parthenon pin
 
 On the feature branch, riot's ``external/parthenon`` tracks ``lroberts36/tt-cross``
 (``branch =`` in ``.gitmodules``) but is pinned to a SHA, so it only moves when we
-choose. Run from the riot root:
+choose. Run from the riot root, in a normal shell (the submodule commands write
+``.git/config``, which is read-only inside the Claude Code sandbox):
 
 .. code-block:: bash
 

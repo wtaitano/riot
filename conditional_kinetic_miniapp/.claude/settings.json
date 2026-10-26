@@ -53,8 +53,7 @@
       "Bash(git ls-files *)",
       "Bash(git submodule status *)",
       "Bash(git rev-parse *)",
-      "Bash(conditional_kinetic_miniapp/script/check_boundary.sh)",
-      "Bash(git submodule update --init --recursive *)"
+      "Bash(conditional_kinetic_miniapp/script/check_boundary.sh)"
     ],
     "ask": [
       "Bash(git push *)",

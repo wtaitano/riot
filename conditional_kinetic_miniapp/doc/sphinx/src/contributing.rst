@@ -62,7 +62,8 @@ One-time setup
       git fetch https://github.com/wtaitano/riot.git wtaitano/ckm && git switch -c wtaitano/ckm FETCH_HEAD
       conditional_kinetic_miniapp/script/setup_remotes.sh <you>
       git fetch ckm
-      git submodule update --init --recursive
+      git submodule update --init --recursive \
+        external/parthenon external/kokkos-kernels external/singularity-eos external/singularity-opac
 
    This gives you the following remotes:
 
@@ -70,7 +71,9 @@ One-time setup
    * ``ckm``: ``wtaitano/riot``, fetch only.
    * ``upstream``: ``lanl/riot``, fetch only.
 
-   It also sets ``pull.rebase=false`` and ``pull.ff=only``.
+   It also sets ``pull.rebase=false`` and ``pull.ff=only``. Run these in a normal
+   shell, not from Claude Code: the sandbox keeps ``.git/config`` read-only, and both
+   ``setup_remotes.sh`` and the submodule fetch write it.
 
 Making a change
 ~~~~~~~~~~~~~~~
