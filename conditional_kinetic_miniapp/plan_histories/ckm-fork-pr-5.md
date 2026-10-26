@@ -1,7 +1,6 @@
-# Plan: make the mattpocock-skills plugin reach every teammate (sub-PR, stacked on #3)
+# Plan: make the mattpocock-skills plugin reach every teammate (wtaitano/riot#5, stacked on #3)
 
-Generated with Claude Code (agentic AI). Rename to `ckm-fork-pr-<N>.md` once the
-internal PR number is known.
+Generated with Claude Code (agentic AI).
 
 ## Problem
 
