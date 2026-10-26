@@ -144,7 +144,17 @@ The policy is riot's
 - **Merges.** Merge commits only, with no squash or rebase merges. `git pull` must not
   rebase (`pull.rebase=false`, `pull.ff=only`).
 - **Pushing.** Agents commit locally. A human decides when to push and when to open a
-  PR.
+  PR. When you need a human to run commands (a push, a PR, anything outside the
+  sandbox), write them to **`scratch/commands.txt`**, holding only the next runnable
+  step, and give the full command including the `cd`.
+
+## Scratch area
+
+`scratch/` (git-ignored) is the place for anything personal or temporary: commands a
+human must run, notes, drafts, and throwaway outputs. It is inside the miniapp, so the
+sandbox and the edit guard both allow writes there. It exists only on your machine, so
+anything the team should see goes in `plan_histories/` or `doc/` instead. Do not write
+scratch files in the riot checkout outside the miniapp, because the guards block it.
 
 ## If Bash fails with `bwrap: Can't mkdir /tmp/claude-empty-...`
 
