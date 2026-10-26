@@ -109,3 +109,18 @@ PR changes the design on top of them.
     it outside Claude.
 - **Verification.** `check_boundary.sh` passes; the docs build with `-W -n`;
   `settings.json` parses.
+
+## Follow-up: ignore the sandbox's placeholder files
+
+- **Finding.** When a session starts in the miniapp, Claude Code's sandbox puts an
+  empty file over each name it protects from writes, so it can mount `/dev/null` there.
+  The names are shell rc files, `.gitconfig`, `.gitmodules`, `.github`, `.idea`,
+  `.vscode`, `.mcp.json`, `.ripgreprc`, `scripts`, `node_modules/`, `.env*`, and the
+  npm/yarn/pnpm/bun files. They stay behind as 0-byte files or character devices and
+  show up as untracked in `git status`.
+- **Change.** The miniapp `.gitignore` lists them, anchored to the miniapp root. ckm
+  tracks none of these names, so nothing real is hidden. A file named `.gitmodules`
+  inside the miniapp is also ruled out by "ckm has no submodules".
+- **Verification.** With every name created in a clean worktree, `git status` lists
+  only the `.gitignore` change; `script/check_env.sh` and `.claude/settings.json` are
+  still tracked; `check_boundary.sh` passes.

@@ -5,3 +5,32 @@ CLAUDE.local.md
 # Personal scratch area, never committed. Commands a human must run, notes, drafts.
 # Anything the team should see belongs in plan_histories/ or doc/ instead.
 scratch/
+
+# Empty placeholders that Claude Code's sandbox creates when a session starts here (the
+# sandbox blocks writes to these names, and it needs a file to mount over each one).
+# They are 0 bytes or /dev/null and are safe to delete once no session is running.
+# ckm uses none of these files: it has no submodules, no JS tooling and no .github/.
+/.bash_profile
+/.bashrc
+/.profile
+/.zprofile
+/.zshrc
+/.gitconfig
+/.gitmodules
+/.github
+/.idea
+/.vscode
+/.mcp.json
+/.ripgreprc
+/scripts
+/node_modules/
+/.env
+/.env.*
+/.npmrc
+/.yarnrc
+/.yarnrc.yml
+/bunfig.toml
+/package.json
+/package-lock.json
+/pnpm-lock.yaml
+/yarn.lock
