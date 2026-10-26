@@ -40,9 +40,11 @@ Do these once, in order. After that, `git pull` keeps everything current.
      external/parthenon external/kokkos-kernels external/singularity-eos external/singularity-opac
    ```
 6. **Start Claude Code from the miniapp** with the sandbox on:
-   `cd conditional_kinetic_miniapp && claude`. Accept the workspace-trust prompt and the
-   `mattpocock-skills` plugin prompt. Check `/agents` (expect `ckm-implementer` and
-   `ckm-reviewer`) and `/hooks` (expect two PreToolUse hooks).
+   `cd conditional_kinetic_miniapp && claude`. Accept the workspace-trust prompt. The
+   shared settings then fetch the `mattpocock-skills` plugin from github.com in the
+   background; there is nothing to install. Check `/agents` (expect `ckm-implementer`
+   and `ckm-reviewer`), `/hooks` (expect two PreToolUse hooks) and `/plugin` (expect
+   `mattpocock-skills@mattpocock`; if it is missing, run `/reload-plugins`).
 7. **Build and test** once, using the commands in [Building](#building) below.
 
 For each change, make a topic branch **with `--no-track`** and open a PR into

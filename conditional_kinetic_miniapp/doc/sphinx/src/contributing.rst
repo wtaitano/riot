@@ -130,8 +130,10 @@ settings are not inherited from parent directories.
 =================================  ==================================================
 Item                               What it does
 =================================  ==================================================
-``settings.json`` plugins          Enables ``mattpocock-skills`` from the official
-                                   marketplace (installed on first trusted launch)
+``settings.json`` plugins          Registers Matt Pocock's ``mattpocock/skills``
+                                   marketplace pinned to tag ``v1.3.1`` and enables
+                                   ``mattpocock-skills`` from it (loads after the
+                                   workspace-trust prompt, with no install step)
 ``settings.json`` permissions      Allows build/test/format and local git; asks
                                    before ``git push``, ``merge``, ``rebase``,
                                    ``reset``; denies pushes to ``upstream``,
