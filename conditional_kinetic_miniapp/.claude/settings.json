@@ -55,6 +55,7 @@
       "Bash(git ls-files *)",
       "Bash(git submodule status *)",
       "Bash(git rev-parse *)",
+      "Bash(curl -s -G https://api.github.com/repos/*)",
       "Bash(conditional_kinetic_miniapp/script/check_boundary.sh)"
     ],
     "ask": [
