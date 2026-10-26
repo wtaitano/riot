@@ -130,8 +130,9 @@ settings are not inherited from parent directories.
 =================================  ==================================================
 Item                               What it does
 =================================  ==================================================
-``settings.json`` plugins          Enables ``mattpocock-skills`` from the official
-                                   marketplace (installed on first trusted launch)
+``settings.json`` plugins          Enables ``mattpocock-skills`` and
+                                   ``frontend-design`` from the official marketplace
+                                   (installed on first trusted launch)
 ``settings.json`` permissions      Allows build/test/format and local git; asks
                                    before ``git push``, ``merge``, ``rebase``,
                                    ``reset``; denies pushes to ``upstream``,
@@ -144,6 +145,10 @@ Item                               What it does
                                    tests serial and MPI, formats, writes the plan file
 ``agents/ckm-reviewer.md``         Read-only review: correctness, tensor-train
                                    semantics, isolation, conventions, AI policy
+``agents/project-map.md``          Draws a one-file HTML project map in the
+                                   git-ignored ``.project-map/``; read-only otherwise
+``hooks/guard_project_map.sh``     Limits ``project-map``'s writes to
+                                   ``.project-map/``, ``.gitignore`` and its memory
 ``skills/ckm-*``                   ``ckm-build``, ``ckm-test``, ``ckm-format``,
                                    ``ckm-plan-history``
 =================================  ==================================================
