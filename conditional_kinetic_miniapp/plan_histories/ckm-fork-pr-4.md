@@ -1,7 +1,6 @@
-# Plan: shared `project-map` agent (fourth sub-PR, stacked on #3)
+# Plan: shared `project-map` agent (wtaitano/riot#4, stacked on #3)
 
-Generated with Claude Code (agentic AI). Rename to `ckm-fork-pr-<N>.md` once the
-internal PR number is known.
+Generated with Claude Code (agentic AI).
 
 ## Goal
 
