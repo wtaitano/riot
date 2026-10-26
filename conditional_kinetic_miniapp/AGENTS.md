@@ -146,6 +146,22 @@ The policy is riot's
 - **Pushing.** Agents commit locally. A human decides when to push and when to open a
   PR.
 
+## If Bash fails with `bwrap: Can't mkdir /tmp/claude-empty-...`
+
+Claude Code's sandbox cannot create its temp directory. This happens on machines where
+`/tmp` is a symlink (for example Darwin, where `/tmp` points to `/ram/tmp`) or is not
+writable. It fails even with the sandbox switched off.
+
+1. Run `script/check_env.sh`. It checks the temp directory and the sandbox
+   dependencies, and prints the exact lines to use on **this** machine.
+2. Set `CLAUDE_CODE_TMPDIR` (and `TMPDIR`) to the real directory it reports, in your
+   shell startup file or in `~/.claude/settings.json`, then restart `claude`.
+
+This cannot be committed to the repo, because Claude Code ignores
+`CLAUDE_CODE_TMPDIR` in project settings. The right path differs per machine. On
+Darwin it is `/ram/tmp`. If your home directory is shared between clusters, set it
+only on the machine that needs it.
+
 ## Pointers
 
 - `README.md`: overview and layout.
