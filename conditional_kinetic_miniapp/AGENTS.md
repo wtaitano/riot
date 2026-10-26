@@ -83,9 +83,11 @@ module load clang/20.1.8 && git ls-files -co --exclude-standard '*.cpp' '*.hpp' 
 ```
 
 **Sandbox.** The shared `.claude/settings.json` gives sandboxed commands write
-access to the repo's `../.git`, so `git add`/`git commit` work. `../.git/hooks` and
-`../.git/config` stay write-protected, because code written there would run outside
-the sandbox. Do not try to work around that.
+access to the repo's `../.git`, so `git add`/`git commit` work. `../.git/hooks`,
+`../.git/config` and `../.git/modules` (the submodules' own git directories, with their
+hooks and config) stay write-protected, because code written there would run outside
+the sandbox the next time a human runs git. So you cannot commit inside a submodule
+such as `../external/parthenon`; ckm never needs to. Do not try to work around that.
 
 **Network.** The sandbox allows only github.com (submodules, the forks, and the API)
 and PyPI (for the docs build). Anything else prompts the human. SSH is not available

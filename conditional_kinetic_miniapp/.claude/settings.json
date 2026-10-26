@@ -10,7 +10,8 @@
       ],
       "denyWrite": [
         "../.git/hooks",
-        "../.git/config"
+        "../.git/config",
+        "../.git/modules"
       ]
     },
     "network": {

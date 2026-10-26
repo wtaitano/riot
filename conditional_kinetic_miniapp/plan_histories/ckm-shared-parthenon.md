@@ -124,3 +124,21 @@ PR changes the design on top of them.
 - **Verification.** With every name created in a clean worktree, `git status` lists
   only the `.gitignore` change; `script/check_env.sh` and `.claude/settings.json` are
   still tracked; `check_boundary.sh` passes.
+
+## Follow-up: protect the submodules' git directories
+
+- **Finding.** `../.git/modules/*/hooks` and `../.git/modules/*/config` were writable
+  in the sandbox; only the top-level `../.git/hooks` and `../.git/config` were denied.
+  This covers `external/parthenon` and its nested Catch2 and Kokkos. A sandboxed
+  command could plant a hook or a `core.fsmonitor` command there. It would then run
+  unsandboxed the next time a human ran git in that submodule, or ran a command that
+  recurses into submodules.
+- **Change.** `denyWrite` gains all of `../.git/modules`. On Linux, `denyWrite` takes
+  no wildcards except a trailing `/**`, so a per-submodule `*/hooks` rule is not
+  possible. A list of paths would also miss submodules added later. Denying the
+  whole directory costs nothing ckm needs: submodule fetches are already a human step,
+  and ckm never commits inside a submodule.
+- **Not changed.** `../.git/info` stays writable, which is harmless: `info/attributes`
+  can only name filter drivers that are defined in the protected `config`.
+  `../.git/worktrees/*/config.worktree` is read only when `extensions.worktreeConfig`
+  is set in the protected `config`.
