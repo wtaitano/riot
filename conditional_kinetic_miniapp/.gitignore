@@ -6,6 +6,10 @@ CLAUDE.local.md
 # Anything the team should see belongs in plan_histories/ or doc/ instead.
 scratch/
 
+# Project map drawn by the project-map agent (.claude/agents/project-map.md). Personal,
+# redrawn on demand; open .project-map/index.html to see it.
+/.project-map/
+
 # Empty placeholders that Claude Code's sandbox creates when a session starts here (the
 # sandbox blocks writes to these names, and it needs a file to mount over each one).
 # They are 0 bytes or /dev/null and are safe to delete once no session is running.

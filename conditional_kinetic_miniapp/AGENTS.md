@@ -186,5 +186,7 @@ only on the machine that needs it.
 - `plan_histories/`: past agent plans, including why the design changed after riot
   review (`ckm-shared-parthenon.md`).
 - `.claude/`: shared Claude Code settings, hooks, agents (`ckm-implementer`,
-  `ckm-reviewer`), and skills (`ckm-build`, `ckm-test`, `ckm-format`,
+  `ckm-reviewer`, `project-map`), and skills (`ckm-build`, `ckm-test`, `ckm-format`,
   `ckm-plan-history`).
+- `.project-map/index.html` (git-ignored): the project map that the `project-map`
+  agent draws. Open it to see where ckm stands.
